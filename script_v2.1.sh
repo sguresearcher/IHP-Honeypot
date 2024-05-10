@@ -141,7 +141,7 @@ if [ -f "$FLAG_FILE" ]; then
         exit 1
     fi
 
-    read -p "After this step, your SSH port will be changed into 228888. Make sure the port is opened there. Do you understand? (y/n) " -r
+    read -p "After this step, your SSH port will be changed into 22888. Make sure the port is opened there. Do you understand? (y/n) " -r
 
     echo '{ "insecure-registries":["103.175.218.193:5000"] }' | sudo tee /etc/docker/daemon.json && sudo systemctl restart docker
 
@@ -180,14 +180,7 @@ if [ -f "$FLAG_FILE" ]; then
     sed -i "s|/home/ubuntu|$current_dir|g" ewsposter/ews.cfg
     sed -i "s|ASEAN-ID-SGU|$nodeid|g" ewsposter/ews.cfg
     cd ewsposter
-
-    crontab -l | { cat; echo "*/5 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; } | crontab -
-    crontab -l | { cat; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1"; } | crontab -
-
-
-#    (crontab -l 2>/dev/null; echo "*/5 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1") | sudo crontab -
-#    (crontab -l 2>/dev/null; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | sudo crontab -
-#    current_dir=$(pwd) && (crontab -l 2>/dev/null; echo "*/1 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | sudo crontab -
+    (crontab -l 2>/dev/null; echo "*/5 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | crontab -
     cd ..
     cd fluent && sudo rm -f fluent.conf && sudo wget https://raw.githubusercontent.com/yevonnaelandrew/hpot_gui_raw/main/fluent.conf
     echo "User id untuk database:"
