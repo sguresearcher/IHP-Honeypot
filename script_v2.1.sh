@@ -1,27 +1,34 @@
 #!/bin/bash
 
-# Version 2.0.2 - 23 February 2024
+# Nama user dan password
+USERNAME="hpot"
+PASSWORD="kjhaskjfhskaljflksajflksajflksahkfjsakfjs!"
 
-NEW_USER="hpot"    # Default username
-PASSWORD="password"   # Change this to your desired password
+# Memeriksa apakah user sudah ada, jika tidak, baru dibuat
+if id "$USERNAME" &>/dev/null; then
+    echo "User $USERNAME sudah ada."
+else
+    echo "Membuat user $USERNAME..."
+    sudo useradd -m -s /bin/bash $USERNAME
+    echo "$USERNAME:$PASSWORD" | sudo chpasswd
+    sudo usermod -aG sudo $USERNAME
+    echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/$USERNAME
+fi
 
-# Function to add a new user, grant sudo privileges, and disallow SSH access
-add_new_user() {
-    if id "$NEW_USER" &>/dev/null; then
-        echo "User $NEW_USER already exists."
-    else
-        sudo useradd -m -s /bin/bash "$NEW_USER"
-        echo "$NEW_USER:$PASSWORD" | sudo chpasswd
-        sudo usermod -aG sudo "$NEW_USER"
-        echo "$NEW_USER ALL=(ALL) NOPASSWD:ALL" | sudo tee /etc/sudoers.d/"$NEW_USER"
-        sudo usermod -s /usr/sbin/nologin "$NEW_USER"  # Disallow SSH access
-        echo "User $NEW_USER created, granted sudo privileges, and SSH access disabled."
-    fi
-}
+# Beralih ke user hpot, download, dan jalankan script baru
+sudo su - $USERNAME -c '
+cd ~
+echo "Menjalankan sebagai $(whoami)..."
 
-# Add the new user and switch to the new user
-add_new_user
-sudo -u "$NEW_USER" bash <<EOF
+# Download script baru
+wget https://raw.githubusercontent.com/yevonnaelandrew/hpot_gui_raw/main/script_v2.sh -O ~/script_v2.sh
+
+# Pastikan script yang diunduh dapat dieksekusi
+chmod +x ~/script_v2.sh
+
+# Jalankan script yang diunduh
+exec ~/script_v2.sh
+'
 
 echo '
    __ __                                 __    ____           __         __ __
@@ -173,9 +180,14 @@ if [ -f "$FLAG_FILE" ]; then
     sed -i "s|/home/ubuntu|$current_dir|g" ewsposter/ews.cfg
     sed -i "s|ASEAN-ID-SGU|$nodeid|g" ewsposter/ews.cfg
     cd ewsposter
+
+    crontab -l | { cat; echo "*/5 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; } | crontab -
+    crontab -l | { cat; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1"; } | crontab -
+
+
 #    (crontab -l 2>/dev/null; echo "*/5 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1") | sudo crontab -
 #    (crontab -l 2>/dev/null; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | sudo crontab -
-    current_dir=$(pwd) && (crontab -l 2>/dev/null; echo "*/1 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | sudo crontab -
+#    current_dir=$(pwd) && (crontab -l 2>/dev/null; echo "*/1 * * * * cd ${current_dir}/ewsposter && /usr/bin/python3 ews.py >> ews.log 2>&1"; echo "@weekly cd ${current_dir} && bash restart.sh >> restart.log 2>&1") | sudo crontab -
     cd ..
     cd fluent && sudo rm -f fluent.conf && sudo wget https://raw.githubusercontent.com/yevonnaelandrew/hpot_gui_raw/main/fluent.conf
     echo "User id untuk database:"
