@@ -1,8 +1,21 @@
 #!/bin/bash
 
-# Nama user dan password
+# Nama user
 USERNAME="hpot"
-PASSWORD="kjhaskjfhskaljflksajflksajflksahkfjsakfjs!"
+
+# Meminta password dari pengguna dengan konfirmasi
+while true; do
+    read -sp "Masukkan password untuk user $USERNAME: " PASSWORD
+    echo
+    read -sp "Konfirmasi password untuk user $USERNAME: " PASSWORD_CONFIRM
+    echo
+
+    if [ "$PASSWORD" == "$PASSWORD_CONFIRM" ]; then
+        break
+    else
+        echo "Password tidak cocok, silakan coba lagi."
+    fi
+done
 
 # Memeriksa apakah user sudah ada, jika tidak, baru dibuat
 if id "$USERNAME" &>/dev/null; then
@@ -25,7 +38,4 @@ wget https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/script_v2
 
 # Pastikan script yang diunduh dapat dieksekusi
 chmod +x ~/script_v2.1.sh
-
-# Jalankan script yang diunduh
-exec ~/script_v2.1.sh
 '
