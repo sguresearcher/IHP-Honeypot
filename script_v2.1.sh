@@ -163,7 +163,7 @@ if [ -f "$FLAG_FILE" ]; then
     sudo sed -i "s/fillthename/$replace_id/g" fluent.conf
     sudo sed -i "s/fillthepass/$replace_pass/g" fluent.conf
     sudo sed -i "s/fillthedb/$replace_db/g" fluent.conf
-    
+    sudo nohup fluentd -c ~/fluent/fluent.conf -vv > ~/fluentd.log 2>&1 &
     cd
     wget https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu22.04_all.deb
     sudo dpkg -i zabbix-release_6.4-1+ubuntu22.04_all.deb
