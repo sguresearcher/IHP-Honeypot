@@ -11,8 +11,8 @@ LOG_FILES["ews"]="~/ewsposter_data/json/ews.json"
 LOG_FILES["dionaea"]="/var/lib/docker/volumes/dionaea/_data/var/lib/dionaea/dionaea.json"
 LOG_FILES["conpot"]="/var/lib/docker/volumes/conpot/_data/conpot.json"
 
-TEMP_LOG_DIR="/home/intelnuc/fluent/tmplog"
-OFFSET_DIR="/home/intelnuc/fluent/offset"
+TEMP_LOG_DIR="~/fluent/tmplog"
+OFFSET_DIR="~/fluent/offset"
 mkdir -p $TEMP_LOG_DIR
 mkdir -p $OFFSET_DIR
 
