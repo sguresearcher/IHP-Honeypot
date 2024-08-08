@@ -11,8 +11,8 @@ LOG_FILES["ews"]="${current_dir}../../ewsposter_data/json/ews.json"
 LOG_FILES["dionaea"]="/var/lib/docker/volumes/dionaea/_data/var/lib/dionaea/dionaea.json"
 LOG_FILES["conpot"]="/var/lib/docker/volumes/conpot/_data/conpot.json"
 
-TEMP_LOG_DIR="${current_dir}../tmplog"
-OFFSET_DIR="${current_dir}../offset"
+TEMP_LOG_DIR="${current_dir}"
+OFFSET_DIR="${current_dir}/offset"
 mkdir -p $TEMP_LOG_DIR
 mkdir -p $OFFSET_DIR
 
