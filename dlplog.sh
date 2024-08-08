@@ -1,15 +1,18 @@
 #!/bin/bash
 current_dir=$(pwd)
+current_user=$(whoami)
+
 sudo apt update
 sudo apt install jq -y
 
-sudo mkdir -p /home/ubuntu/fluent/tmplog
-sudo mkdir -p /home/ubuntu/fluent/offset
+sudo mkdir -p "${current_dir}/fluent/tmplog"
+sudo mkdir -p "${current_dir}/fluent/offset"
 
-sudo chown -R ubuntu:ubuntu /home/ubuntu/fluent
+sudo chown -R ${current_user}:${current_user} "${current_dir}/fluent"
 
-curl -o /home/ubuntu/fluent/log_down_handler.sh https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh
-chmod +x /home/ubuntu/fluent/log_down_handler.sh
+curl -o ${current_dir}/fluent/log_down_handler.sh https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh
+chmod +x ${current_dir}/fluent/log_down_handler.sh
 (crontab -l 2>/dev/null; echo "* * * * * ${current_dir}/fluent/tmplog/log_down_handler.sh") | crontab -
 
 echo "DLP Installation Finished."
+
