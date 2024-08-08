@@ -6,7 +6,7 @@ sudo apt update
 sudo apt install jq -y
 
 sudo mkdir -p "${current_dir}/fluent/tmplog"
-sudo mkdir -p "${current_dir}/fluent/offset"
+sudo mkdir -p "${current_dir}/fluent/tmplog/offset"
 
 sudo chown -R ${current_user}:${current_user} "${current_dir}/fluent"
 
