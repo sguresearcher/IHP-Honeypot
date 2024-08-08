@@ -10,9 +10,9 @@ sudo mkdir -p "${current_dir}/fluent/offset"
 
 sudo chown -R ${current_user}:${current_user} "${current_dir}/fluent"
 
-curl -o ${current_dir}/fluent/log_down_handler.sh https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh
-chmod +x ${current_dir}/fluent/log_down_handler.sh
-(crontab -l 2>/dev/null; echo "* * * * * ${current_dir}/fluent/tmplog/log_down_handler.sh") | crontab -
+curl -o ${current_dir}/fluent/tmplog/log_down_handler.sh https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh
+chmod +x ${current_dir}/fluent/tmplog/log_down_handler.sh
 
+echo "$(sudo crontab -l 2>/dev/null; echo "* * * * * ${current_dir}/fluent/tmplog/log_down_handler.sh")" | sudo crontab -
 echo "DLP Installation Finished."
 
