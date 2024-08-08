@@ -1,18 +1,18 @@
 #!/bin/bash
 
-SCRIPT_LOG="~/fluent/script_output.log"
+SCRIPT_LOG="$HOME/fluent/script_output.log"
 
 declare -A LOG_FILES
 LOG_FILES["cowrie"]="/var/lib/docker/volumes/cowrie-var/_data/log/cowrie/cowrie.json"
 LOG_FILES["honeytrap"]="/var/lib/docker/volumes/honeytrap/_data/honeytrap.log"
 LOG_FILES["elasticpot"]="/var/lib/docker/volumes/elasticpot/_data/elasticpot.json"
 LOG_FILES["rdpy"]="/var/lib/docker/volumes/rdpy/_data/rdpy.log"
-LOG_FILES["ews"]="~/ewsposter_data/json/ews.json"
+LOG_FILES["ews"]="$HOME/ewsposter_data/json/ews.json"
 LOG_FILES["dionaea"]="/var/lib/docker/volumes/dionaea/_data/var/lib/dionaea/dionaea.json"
 LOG_FILES["conpot"]="/var/lib/docker/volumes/conpot/_data/conpot.json"
 
-TEMP_LOG_DIR="~/fluent/tmplog"
-OFFSET_DIR="~/fluent/offset"
+TEMP_LOG_DIR="$HOME/fluent/tmplog"
+OFFSET_DIR="$HOME/fluent/offset"
 mkdir -p $TEMP_LOG_DIR
 mkdir -p $OFFSET_DIR
 
@@ -66,4 +66,5 @@ process_logs() {
 }
 
 process_logs
+
 
