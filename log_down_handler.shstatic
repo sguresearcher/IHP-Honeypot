@@ -1,18 +1,18 @@
 #!/bin/bash
-current_dir=$(pwd)
-SCRIPT_LOG="${current_dir}../script_output.log"
+
+SCRIPT_LOG="/home/intelnuc/fluent/script_output.log"
 
 declare -A LOG_FILES
 LOG_FILES["cowrie"]="/var/lib/docker/volumes/cowrie-var/_data/log/cowrie/cowrie.json"
 LOG_FILES["honeytrap"]="/var/lib/docker/volumes/honeytrap/_data/honeytrap.log"
 LOG_FILES["elasticpot"]="/var/lib/docker/volumes/elasticpot/_data/elasticpot.json"
 LOG_FILES["rdpy"]="/var/lib/docker/volumes/rdpy/_data/rdpy.log"
-LOG_FILES["ews"]="${current_dir}../../ewsposter_data/json/ews.json"
+LOG_FILES["ews"]="/home/intelnuc/ewsposter_data/json/ews.json"
 LOG_FILES["dionaea"]="/var/lib/docker/volumes/dionaea/_data/var/lib/dionaea/dionaea.json"
 LOG_FILES["conpot"]="/var/lib/docker/volumes/conpot/_data/conpot.json"
 
-TEMP_LOG_DIR="${current_dir}../tmplog"
-OFFSET_DIR="${current_dir}../offset"
+TEMP_LOG_DIR="/home/intelnuc/fluent/tmplog"
+OFFSET_DIR="/home/intelnuc/fluent/offset"
 mkdir -p $TEMP_LOG_DIR
 mkdir -p $OFFSET_DIR
 
@@ -66,6 +66,4 @@ process_logs() {
 }
 
 process_logs
-
-
 
