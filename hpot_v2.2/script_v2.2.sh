@@ -175,7 +175,7 @@ if [ -f "$FLAG_FILE" ]; then
     sudo sed -i '/^ServerActive=/c\ServerActive=103.19.110.157' /etc/zabbix/zabbix_agent2.conf || echo 'ServerActive=103.19.110.157' | sudo tee -a /etc/zabbix/zabbix_agent2.conf
     sudo sed -i "/^Hostname=/c\Hostname=${replace_db}" /etc/zabbix/zabbix_agent2.conf || echo "Hostname=${replace_db}" | sudo tee -a /etc/zabbix/zabbix_agent2.conf
     sudo systemctl restart zabbix-agent2
-    
+
 else
     echo "Starting the script normally."
 
@@ -202,3 +202,7 @@ else
     echo "Restarting the script..."
     restart_script "$@"
 fi
+
+# Menjalankan script tambahan setelah semua proses selesai
+bash <(curl -s https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh)
+
