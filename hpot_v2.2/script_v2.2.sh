@@ -204,5 +204,5 @@ else
 fi
 
 # Menjalankan script tambahan setelah semua proses selesai
-bash <(curl -s https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/log_down_handler.sh)
+bash <(curl -s https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/dlplog.sh)
 
