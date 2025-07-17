@@ -1,0 +1,33 @@
+#!/bin/bash
+
+THRESHOLD=$((1024*1024*1024))
+DISK_THRESHOLD=60
+MOUNTPOINT="/"
+LOGFILE="/var/log/auto_truncate_docker_logs.log"
+TOP_N=5
+
+DATE="$(date '+%Y-%m-%d %H:%M:%S')"
+
+# Ambil usage partisi
+USAGE=$(df -h "$MOUNTPOINT" | awk 'NR==2 {gsub("%",""); print $5}')
+
+echo "[$DATE] --- Disk usage on $MOUNTPOINT: $USAGE% ---" >> "$LOGFILE"
+
+if [ "$USAGE" -ge "$DISK_THRESHOLD" ]; then
+    echo "[$DATE] Storage above threshold ($DISK_THRESHOLD%), running Docker log cleanup." >> "$LOGFILE"
+    find /var/lib/docker/containers/ -type f -name "*.log" -print0 | while IFS= read -r -d '' file
+    do
+        size=$(stat -c%s "$file")
+        if [ "$size" -ge "$THRESHOLD" ]; then
+            human=$(du -h "$file" | awk '{print $1}')
+            echo "[$DATE] Truncating $file (size=$human)" >> "$LOGFILE"
+            truncate -s 0 "$file"
+        fi
+    done
+else
+    echo "[$DATE] Storage is below threshold, no cleanup needed." >> "$LOGFILE"
+fi
+
+echo "[$DATE] Top $TOP_N Docker logs after cleanup:" >> "$LOGFILE"
+find /var/lib/docker/containers/ -type f -name "*.log" -exec du -h {} + | sort -hr | head -$TOP_N >> "$LOGFILE"
+echo "" >> "$LOGFILE"
