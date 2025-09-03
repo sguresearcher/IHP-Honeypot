@@ -27,6 +27,6 @@ fi
 sudo su - $USERNAME -c '
 cd ~
 echo "Running as $(whoami)..."
-wget https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/hpot_v2.2/script_v2.2.sh
+wget https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/hpot_v2.2/script_v2.2-intel.sh
 chmod +x ~/script_v2.2.sh
 '
