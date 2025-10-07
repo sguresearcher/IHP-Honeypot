@@ -41,10 +41,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Update & upgrade (seperti lama)
 sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -o Dpkg::Options::="--force-confnew"
 
-# limits.conf (seperti lama)
 LIMITS_CONF="/etc/security/limits.conf"
 LIMITS_CONTENT=("root soft nofile 65536" "root hard nofile 65536" "* soft nofile 65536" "* hard nofile 65536")
 for line in "${LIMITS_CONTENT[@]}"; do
@@ -53,7 +51,6 @@ for line in "${LIMITS_CONTENT[@]}"; do
     fi
 done
 
-# sysctl.conf (seperti lama)
 SYSCTL_CONF="/etc/sysctl.conf"
 SYSCTL_SETTINGS=("net.core.somaxconn = 1024" "net.core.netdev_max_backlog = 5000" "net.core.rmem_max = 16777216" "net.core.wmem_max = 16777216")
 for setting in "${SYSCTL_SETTINGS[@]}"; do
@@ -71,7 +68,6 @@ if [ -f "$FLAG_FILE" ]; then
     echo "Restart detected. Continuing from the restart point."
     # rm "$FLAG_FILE"  # (tetap dikomentari seperti script lama)
 
-    # Dependensi lama (biarkan apa adanya)
     wget -q http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.22_amd64.deb && sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2.22_amd64.deb || true
 
     rvm install 2.7.6 || true
@@ -102,12 +98,8 @@ if [ -f "$FLAG_FILE" ]; then
 
     read -p "After this step, your SSH port will be changed into 22888. Make sure the port is opened there. Do you understand? (y/n) " -r
 
-    # Tidak perlu insecure-registries lagi (pakai Docker Hub public)
-    # echo '{ "insecure-registries":["103.175.218.193:5000"] }' | sudo tee /etc/docker/daemon.json && sudo systemctl restart docker
-
     sudo sed -i -e "s/^#*Port .*/Port 22888/g" /etc/ssh/sshd_config && (sudo systemctl restart ssh || sudo service ssh restart)
 
-    # --------- PULL dari Docker Hub (andiparada/*:v2.1) ----------
     sudo docker pull andiparada/cowrie:v2.1
     sudo docker pull andiparada/conpot:v2.1
     sudo docker pull andiparada/rdpy:v2.1
@@ -115,52 +107,43 @@ if [ -f "$FLAG_FILE" ]; then
     sudo docker pull andiparada/dionaea:v2.1
     sudo docker pull andiparada/honeytrap:v2.1
 
-    # Volumes seperti script lama (tetap)
     sudo docker volume create cowrie-var
     sudo docker volume create cowrie-etc
     sudo mkdir -p /var/lib/docker/volumes/rdpy /var/lib/docker/volumes/rdpy/_data
     sudo docker volume create gridpot
     sudo mkdir -p /var/lib/docker/volumes/elasticpot /var/lib/docker/volumes/elasticpot/_data
 
-    # --------- RUN containers (pakai image Docker Hub & tag v2.1) ----------
-    # Cowrie (tetap sama opsi-nya)
     sudo docker run -p 22:22/tcp -p 23:23/tcp \
       -v cowrie-etc:/cowrie/cowrie-git/etc \
       -v cowrie-var:/cowrie/cowrie-git/var \
       -d --cap-drop=ALL --read-only --restart unless-stopped \
       andiparada/cowrie:v2.1
 
-    # Dionaea (tetap sama)
     sudo docker run -it -p 21:21 -p 42:42 -p 69:69/udp -p 80:80 -p 135:135 -p 443:443 -p 445:445 \
       -p 1433:1433 -p 1723:1723 -p 1883:1883 -p 3306:3306 -p 5060:5060 -p 5060:5060/udp \
       -p 5061:5061 -p 11211:11211 -v dionaea:/opt/dionaea \
       -d --restart unless-stopped \
       andiparada/dionaea:v2.1
 
-    # RDPY (tetap sama)
     sudo docker run -it -p 3389:3389 -v rdpy:/var/log \
       -d --restart unless-stopped \
       andiparada/rdpy:v2.1 \
       /bin/sh -c 'python /rdpy/bin/rdpy-rdphoneypot.py -l 3389 /rdpy/bin/1 >> /var/log/rdpy.log'
 
-    # Elasticpot (tetap sama)
     sudo docker run -it -p 9200:9200/tcp -v elasticpot:/elasticpot/log \
       -d --restart unless-stopped \
       andiparada/elasticpot:v2.1 \
       /bin/sh -c 'cd elasticpot; python3 elasticpot.py'
 
-    # Honeytrap (tetap sama)
     sudo docker run -it -p 2222:2222 -p 8545:8545 -p 5900:5900 -p 25:25 -p 5037:5037 -p 631:631 -p 389:389 -p 6379:6379 \
       -v honeytrap:/home -d --restart unless-stopped \
       andiparada/honeytrap:v2.1
 
-    # Conpot (tetap sama)
     sudo docker run -d --restart always -v conpot:/data \
       -p 8000:8800 -p 10201:10201 -p 5020:5020 -p 16100:16100/udp -p 47808:47808/udp -p 6230:6230/udp \
       -p 2121:2121 -p 6969:6969/udp -p 44818:44818 \
       andiparada/conpot:v2.1
 
-    # --------- EWS Poster & Fluentd (tetap) ----------
     sudo apt-get install -y python3-pip
     if [ ! -d ewsposter ]; then
       git clone https://github.com/yevonnaelandrew/ewsposter
@@ -188,7 +171,6 @@ if [ -f "$FLAG_FILE" ]; then
     sudo sed -i "s/fillthedb/$replace_db/g" fluent.conf
     cd
 
-    # --------- Zabbix (tetap) ----------
     wget -q https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu22.04_all.deb
     sudo dpkg -i zabbix-release_6.4-1+ubuntu22.04_all.deb
     sudo apt update -y
