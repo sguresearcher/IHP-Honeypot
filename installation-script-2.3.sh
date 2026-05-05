@@ -514,7 +514,7 @@ C_CONPOT="conpot-hp"
 free_ports 2222 23
 start_container "$C_COWRIE" \
     # -p 22:22/tcp -p 23:23/tcp \
-    -p 2222:22/tcp
+    -p 2222:22/tcp \
     -v cowrie-etc:/cowrie/cowrie-git/etc \
     -v cowrie-var:/cowrie/cowrie-git/var \
     -d --cap-drop=ALL --read-only --restart unless-stopped \
