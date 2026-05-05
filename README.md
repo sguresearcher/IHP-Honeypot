@@ -116,3 +116,9 @@ Once Phase 2 completes, the script will output a final status summary. Review th
 
 6. **Idempotency:**
    If a container stops or configuration needs to be refreshed (like updating NATS credentials), you can safely run the script again (`./installation-script-2.3.sh`). It will skip steps that are already completed and recreate containers with the latest configuration.
+
+Note* :
+If you want to go back to phase 1, use this command: 
+```bash
+./installation-script-2.3.sh --phase1
+```

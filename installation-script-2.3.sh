@@ -89,6 +89,17 @@ fi
 sudo -l &>/dev/null || die "User must have sudo permissions."
 
 # ============================================================
+# FORCE PHASE CONTROL
+# ============================================================
+
+FORCE_PHASE1=false
+
+if [[ "${1:-}" == "--phase1" ]]; then
+    FORCE_PHASE1=true
+    warn "Forcing Phase 1 execution (manual override)."
+fi
+
+# ============================================================
 # CONFIGURATION INPUT
 # ============================================================
 
@@ -103,7 +114,11 @@ if [ -f "$ENV_CACHE" ]; then
     read -p "Use previous configuration? [Y/n, default: Y]: " REUSE_ENV
     REUSE_ENV=${REUSE_ENV:-"Y"}
     if [[ "$REUSE_ENV" =~ ^[Yy]$ ]]; then
-        source "$ENV_CACHE"
+        if [ -r "$ENV_CACHE" ]; then
+            source "$ENV_CACHE"
+        else
+            warn "Cannot read $ENV_CACHE — permission issue"
+        fi
         USE_CACHE=true
         LEAF_CREDS_CONTENT=$(echo "$LEAF_CREDS_B64" | base64 -d)
         if [ "$NATS_TLS_ENABLED" = "true" ]; then
@@ -227,7 +242,8 @@ read -p "Zabbix Hostname (name of this VM): " ZABBIX_HOSTNAME
 
     # Save to cache
     sudo touch "$ENV_CACHE"
-    sudo chmod 600 "$ENV_CACHE"
+    sudo chown "$USER":"$USER" "$ENV_CACHE"
+    chmod 600 "$ENV_CACHE"
     cat <<EOF | sudo tee "$ENV_CACHE" >/dev/null
 NATS_HOSTS="${NATS_HOSTS}"
 NATS_PORT="${NATS_PORT}"
@@ -267,7 +283,7 @@ phase1_done() { [ -f "$FLAG_FILE" ]; }
 # PHASE 1 — Pre-reboot setup
 # ============================================================
 
-if ! phase1_done; then
+if ! phase1_done || $FORCE_PHASE1; then
     log "PHASE 1: System preparation..."
 
     export DEBIAN_FRONTEND=noninteractive
@@ -386,7 +402,15 @@ if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
         log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
     fi
 
-    sudo systemctl restart sshd
+    if command -v systemctl &>/dev/null; then
+        if systemctl list-unit-files | grep -q sshd.service; then
+            sudo systemctl restart sshd
+        else
+            sudo systemctl restart ssh
+        fi
+    else
+        sudo service ssh restart
+    fi
     log "SSH port changed to ${NEW_SSH_PORT}."
 else
     info "SSH is already on port ${NEW_SSH_PORT}, skipping."
