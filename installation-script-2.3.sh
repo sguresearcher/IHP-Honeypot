@@ -48,8 +48,38 @@ container_exists()  { sudo docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 
 # Free a port: stop Docker containers AND host processes binding that port
+# free_port() {
+#     local port="$1"
+
+#     # 1) Docker containers publishing this port
+#     local ids
+#     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
+#     if [[ -n "$ids" ]]; then
+#         warn "  Docker: port ${port} is used by a container — stopping..."
+#         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
+#     fi
+
+#     # 2) Host processes (nginx, apache, etc.) listening on this port
+#     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
+#         warn "  Host: port ${port} is used by a host process — killing..."
+#         sudo fuser -k "${port}/tcp" 2>/dev/null || true
+#         sudo fuser -k "${port}/udp" 2>/dev/null || true
+#     fi
+# }
+
+# Protect critical ports (SSH etc.)
+PROTECTED_PORTS=(22 22888)
+
 free_port() {
     local port="$1"
+
+    # 🔒 Skip protected ports
+    for p in "${PROTECTED_PORTS[@]}"; do
+        if [[ "$port" == "$p" ]]; then
+            warn "Skipping protected port $port"
+            return
+        fi
+    done
 
     # 1) Docker containers publishing this port
     local ids
@@ -59,7 +89,7 @@ free_port() {
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Host processes (nginx, apache, etc.) listening on this port
+    # 2) Host processes using this port
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
         warn "  Host: port ${port} is used by a host process — killing..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
@@ -481,9 +511,10 @@ C_HONEYTRAP="honeytrap-hp"
 C_CONPOT="conpot-hp"
 
 # --- Cowrie ---
-free_ports 22 23
+free_ports 2222 23
 start_container "$C_COWRIE" \
-    -p 22:22/tcp -p 23:23/tcp \
+    # -p 22:22/tcp -p 23:23/tcp \
+    -p 2222:22/tcp
     -v cowrie-etc:/cowrie/cowrie-git/etc \
     -v cowrie-var:/cowrie/cowrie-git/var \
     -d --cap-drop=ALL --read-only --restart unless-stopped \
