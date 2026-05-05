@@ -1,10 +1,10 @@
 #!/bin/bash
 # ============================================================
 # HONEYPOT INSTALLER v2.3
-# Idempotent — safe to run multiple times
-# Fix: URL-encode NATS password, dionaea volume, remove -it flag
-# Fix: cleanup old containers by port (random Docker names)
-# + TLS support for connection to NATS Hub (CA cert)
+# Idempotent — aman dijalankan berulang kali
+# Fix: URL-encode password NATS, dionaea volume, hapus -it flag
+# Fix: cleanup container lama by port (nama random Docker)
+# + TLS support untuk koneksi ke NATS Hub (CA cert)
 # + Malware Uploader (dionaea binaries → NATS JetStream Object Store)
 # ============================================================
 
@@ -47,32 +47,32 @@ urlencode() {
 container_exists()  { sudo docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 
-# Free a port: stop Docker containers AND host processes binding that port
+# Bebaskan port: hentikan Docker container DAN proses host yang bind port tsb
 free_port() {
     local port="$1"
 
-    # 1) Docker containers publishing this port
+    # 1) Docker container yang publish port ini
     local ids
     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
     if [[ -n "$ids" ]]; then
-        warn "  Docker: port ${port} is used by a container — stopping..."
+        warn "  Docker: port ${port} dipakai container — menghentikan..."
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Host processes (nginx, apache, etc.) listening on this port
+    # 2) Proses host (nginx, apache, dll) yang listen di port ini
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
-        warn "  Host: port ${port} is used by a host process — killing..."
+        warn "  Host: port ${port} dipakai proses host — mematikan..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
         sudo fuser -k "${port}/udp" 2>/dev/null || true
     fi
 }
 
 free_ports() {
-    log "Freeing ports: $*"
+    log "Membebaskan ports: $*"
     for p in "$@"; do
         free_port "$p"
     done
-    sleep 1   # give the kernel time to release the socket
+    sleep 1   # beri kernel waktu release socket
 }
 
 # ============================================================
@@ -83,13 +83,13 @@ read -p "Do you accept the terms and conditions? (y/n) " -r
 [[ $REPLY =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 1; }
 
 if [ "$(id -u)" -eq 0 ]; then
-    die "Do not run as root. Use a regular user with sudo."
+    die "Jangan jalankan sebagai root. Gunakan user biasa dengan sudo."
 fi
 
-sudo -l &>/dev/null || die "User must have sudo permissions."
+sudo -l &>/dev/null || die "User harus punya sudo permissions."
 
 # ============================================================
-# CONFIGURATION INPUT
+# INPUT KONFIGURASI
 # ============================================================
 
 ENV_CACHE="/var/honeypot_env.cache"
@@ -100,7 +100,7 @@ if [ -f "$ENV_CACHE" ]; then
     echo "╔══════════════════════════════════════╗"
     echo "║   Previous Configuration Found       ║"
     echo "╚══════════════════════════════════════╝"
-    read -p "Use previous configuration? [Y/n, default: Y]: " REUSE_ENV
+    read -p "Gunakan konfigurasi sebelumnya? [Y/n, default: Y]: " REUSE_ENV
     REUSE_ENV=${REUSE_ENV:-"Y"}
     if [[ "$REUSE_ENV" =~ ^[Yy]$ ]]; then
         source "$ENV_CACHE"
@@ -109,7 +109,7 @@ if [ -f "$ENV_CACHE" ]; then
         if [ "$NATS_TLS_ENABLED" = "true" ]; then
             TLS_CA_CONTENT=$(echo "$TLS_CA_B64" | base64 -d)
         fi
-        log "Previous configuration successfully loaded from $ENV_CACHE."
+        log "Konfigurasi sebelumnya berhasil dimuat dari $ENV_CACHE."
     fi
 fi
 
@@ -128,8 +128,8 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS JWT Credentials            ║"
 echo "╚══════════════════════════════════════╝"
-echo "    Please COPY the entire contents of this Tenant's credentials (.creds) file."
-echo "    Then PASTE it in this terminal. Once all text is pasted, type 'EOF' on a new line and press Enter:"
+echo "    Silakan COPY seluruh isi text credentials (.creds) milik Tenant ini."
+echo "    Lalu PASTE di terminal ini. Setelah semua ter-paste, ketik 'EOF' pada baris baru dan tekan Enter:"
 echo "    --------------------------------------------------------"
 
 while IFS= read -r line; do
@@ -140,10 +140,10 @@ while IFS= read -r line; do
 done
 
 if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
-  die "Credentials must not be empty!"
+  die "Kredensial tidak boleh kosong!"
 fi
 echo "    --------------------------------------------------------"
-log "Credentials successfully read."
+log "Kredensial berhasil dibaca."
 
 # ============================================================
 # INPUT TLS CONFIGURATION
@@ -153,10 +153,10 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      TLS Configuration               ║"
 echo "╚══════════════════════════════════════╝"
-echo "    TLS encrypts the connection between the leaf node and the NATS Hub."
-echo "    You need the CA certificate from the NATS Hub server."
+echo "    TLS mengenkripsi koneksi antara leaf node dan NATS Hub."
+echo "    Kamu butuh CA certificate dari NATS Hub server."
 echo ""
-read -p "Enable TLS to NATS Hub? [Y/n, default: Y]: " USE_TLS
+read -p "Aktifkan TLS ke NATS Hub? [Y/n, default: Y]: " USE_TLS
 USE_TLS=${USE_TLS:-"Y"}
 
 NATS_TLS_ENABLED=false
@@ -169,21 +169,21 @@ if [[ "$USE_TLS" =~ ^[Yy]$ ]]; then
     NATS_URL_SCHEME="tls"
 
     echo ""
-    echo "[?] CA Certificate Source"
-    echo "    [1] Paste CA cert contents directly (inline)"
-    echo "    [2] Provide path to an existing CA cert file"
-    read -p "    Choose [1/2, default: 1]: " TLS_CERT_CHOICE
+    echo "[?] Sumber CA Certificate"
+    echo "    [1] Paste isi CA cert langsung (inline)"
+    echo "    [2] Masukkan path file CA cert yang sudah ada"
+    read -p "    Pilih [1/2, default: 1]: " TLS_CERT_CHOICE
     TLS_CERT_CHOICE=${TLS_CERT_CHOICE:-"1"}
 
     if [[ "$TLS_CERT_CHOICE" == "2" ]]; then
-        read -p "    CA cert file path (.pem): " CA_CERT_PATH
-        [[ -f "$CA_CERT_PATH" ]] || die "CA cert file not found: ${CA_CERT_PATH}"
+        read -p "    Path file CA cert (.pem): " CA_CERT_PATH
+        [[ -f "$CA_CERT_PATH" ]] || die "File CA cert tidak ditemukan: ${CA_CERT_PATH}"
         TLS_CA_CONTENT=$(cat "$CA_CERT_PATH")
-        log "CA cert read from: ${CA_CERT_PATH}"
+        log "CA cert dibaca dari: ${CA_CERT_PATH}"
     else
         echo ""
-        echo "    Please PASTE the CA certificate (.pem) contents below."
-        echo "    When done, type 'EOF' on a new line and press Enter:"
+        echo "    Silakan PASTE isi CA certificate (.pem) di bawah ini."
+        echo "    Setelah selesai, ketik 'EOF' pada baris baru dan tekan Enter:"
         echo "    --------------------------------------------------------"
         while IFS= read -r line; do
             if [[ "$line" == "EOF" ]]; then
@@ -194,22 +194,22 @@ if [[ "$USE_TLS" =~ ^[Yy]$ ]]; then
         echo "    --------------------------------------------------------"
 
         if [[ -z "$(echo -n "$TLS_CA_CONTENT" | tr -d '[:space:]')" ]]; then
-            die "CA certificate must not be empty!"
+            die "CA certificate tidak boleh kosong!"
         fi
-        log "CA cert successfully read (inline)."
+        log "CA cert berhasil dibaca (inline)."
     fi
 
     echo ""
-    read -p "    Skip TLS verification (not recommended, for dev only)? [y/N, default: N]: " TLS_SKIP_INPUT
+    read -p "    Skip TLS verification (tidak direkomendasikan, hanya untuk dev)? [y/N, default: N]: " TLS_SKIP_INPUT
     TLS_SKIP_INPUT=${TLS_SKIP_INPUT:-"N"}
     if [[ "$TLS_SKIP_INPUT" =~ ^[Yy]$ ]]; then
         TLS_SKIP_VERIFY=true
-        warn "TLS verification disabled (insecure_skip_verify). For testing only!"
+        warn "TLS verify dinonaktifkan (insecure_skip_verify). Hanya untuk testing!"
     fi
 
-    log "TLS enabled (URL scheme: ${NATS_URL_SCHEME}://)."
+    log "TLS diaktifkan (URL scheme: ${NATS_URL_SCHEME}://)."
 else
-    log "TLS disabled. Plain connection without encryption."
+    log "TLS dinonaktifkan. Koneksi plain tanpa enkripsi."
 fi
 
 
@@ -222,10 +222,10 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      Zabbix Configuration            ║"
 echo "╚══════════════════════════════════════╝"
-read -p "Zabbix Hostname (name of this VM): " ZABBIX_HOSTNAME
-[[ -n "$ZABBIX_HOSTNAME" ]] || die "Zabbix hostname must not be empty."
+read -p "Zabbix Hostname (nama VM ini): " ZABBIX_HOSTNAME
+[[ -n "$ZABBIX_HOSTNAME" ]] || die "Zabbix hostname tidak boleh kosong."
 
-    # Save to cache
+    # Simpan ke cache
     sudo touch "$ENV_CACHE"
     sudo chmod 600 "$ENV_CACHE"
     cat <<EOF | sudo tee "$ENV_CACHE" >/dev/null
@@ -241,7 +241,7 @@ EOF
     if [ "$NATS_TLS_ENABLED" = "true" ]; then
         echo "TLS_CA_B64=\"$(echo "$TLS_CA_CONTENT" | base64 -w 0)\"" | sudo tee -a "$ENV_CACHE" >/dev/null
     fi
-    log "New configuration saved to $ENV_CACHE."
+    log "Konfigurasi baru disimpan ke $ENV_CACHE."
 
 fi # end USE_CACHE = false
 
@@ -310,15 +310,15 @@ if ! phase1_done; then
         sudo mkswap /swapfile
         sudo swapon /swapfile
         grep -qF '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-        log "1G Swap is active."
+        log "Swap 1G aktif."
     else
-        info "Swap already exists, skipping."
+        info "Swap sudah ada, skip."
     fi
 
     sudo touch "$FLAG_FILE"
-    log "PHASE 1 complete. Reboot required..."
-    read -p "Reboot now? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || { warn "Re-run the script after manual reboot."; exit 0; }
+    log "PHASE 1 selesai. Reboot diperlukan..."
+    read -p "Reboot sekarang? (y/n) " -r
+    [[ $REPLY =~ ^[Yy]$ ]] || { warn "Jalankan ulang script setelah reboot manual."; exit 0; }
     sudo reboot
     exit 0
 fi
@@ -327,9 +327,9 @@ fi
 # PHASE 2 — Post-reboot: Docker + Honeypots + NATS + Fluent Bit
 # ============================================================
 
-log "PHASE 2: Installing Docker and Honeypot containers..."
+log "PHASE 2: Instalasi Docker dan Honeypot containers..."
 
-# Ensure port-management tools are available
+# Pastikan tools port-management tersedia
 sudo apt-get install -y psmisc iproute2 &>/dev/null || true
 
 # ============================================================
@@ -337,20 +337,20 @@ sudo apt-get install -y psmisc iproute2 &>/dev/null || true
 # ============================================================
 
 if ! command -v docker &>/dev/null; then
-    log "Installing Docker..."
+    log "Menginstall Docker..."
     curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
     sudo sh /tmp/get-docker.sh
     sudo groupadd docker 2>/dev/null || true
     sudo usermod -aG docker "$USER"
     sudo systemctl enable docker.service containerd.service
-    log "Docker installed."
+    log "Docker terinstall."
 else
-    info "Docker already present ($(docker --version)), skipping install."
+    info "Docker sudah ada ($(docker --version)), skip install."
 fi
 
-# Ensure the current user can access docker without sudo in this session
+# Pastikan user bisa akses docker tanpa sudo di sesi ini
 if ! groups | grep -q docker; then
-    warn "User is not in the docker group. Use sudo or re-login."
+    warn "User belum di group docker. Gunakan sudo atau re-login."
 fi
 
 # ============================================================
@@ -361,11 +361,11 @@ REGISTRY_IP="103.19.110.148:5000"
 DAEMON_JSON="/etc/docker/daemon.json"
 
 if ! grep -q "$REGISTRY_IP" "$DAEMON_JSON" 2>/dev/null; then
-    log "Adding insecure registry..."
+    log "Menambahkan insecure registry..."
     echo "{ \"insecure-registries\":[\"${REGISTRY_IP}\"] }" | sudo tee "$DAEMON_JSON"
     sudo systemctl restart docker
 else
-    info "Insecure registry already configured, skipping."
+    info "Insecure registry sudah dikonfigurasi, skip."
 fi
 
 # ============================================================
@@ -376,20 +376,20 @@ NEW_SSH_PORT="22888"
 CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 
 if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
-    warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
-    read -p "Continue? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
+    warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
+    read -p "Lanjut? (y/n) " -r
+    [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
     sudo sed -i -e "s/^#\\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
     
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
-        log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
+        log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
     fi
 
     sudo systemctl restart sshd
-    log "SSH port changed to ${NEW_SSH_PORT}."
+    log "SSH port diubah ke ${NEW_SSH_PORT}."
 else
-    info "SSH is already on port ${NEW_SSH_PORT}, skipping."
+    info "SSH sudah di port ${NEW_SSH_PORT}, skip."
 fi
 
 # ============================================================
@@ -403,7 +403,7 @@ IMAGES=(
 log "Pulling honeypot images..."
 for img in "${IMAGES[@]}"; do
     if sudo docker image inspect "${REGISTRY_IP}/${img}:latest" &>/dev/null; then
-        info "Image ${img} already exists, skipping pull."
+        info "Image ${img} sudah ada, skip pull."
     else
         log "Pulling ${img}..."
         sudo docker pull "${REGISTRY_IP}/${img}:latest"
@@ -416,13 +416,13 @@ done
 
 VOLUMES=("cowrie-var" "cowrie-etc" "gridpot" "elasticpot" "dionaea" "honeytrap-data" "conpot-data")
 
-log "Creating Docker volumes..."
+log "Membuat Docker volumes..."
 for vol in "${VOLUMES[@]}"; do
     if sudo docker volume inspect "$vol" &>/dev/null; then
-        info "Volume ${vol} already exists, skipping."
+        info "Volume ${vol} sudah ada, skip."
     else
         sudo docker volume create "$vol"
-        log "Volume ${vol} created."
+        log "Volume ${vol} dibuat."
     fi
 done
 
@@ -430,25 +430,25 @@ sudo mkdir -p /var/lib/docker/volumes/rdpy/_data
 
 # ============================================================
 # HONEYPOT CONTAINERS
-# Idempotent: skip if container is already running, recreate if exited
+# Idempotent: skip jika container sudah running, recreate jika exited
 # ============================================================
 
 start_container() {
     local name="$1"
     shift
     if container_running "$name"; then
-        info "Container ${name} is already running, skipping."
+        info "Container ${name} sudah running, skip."
         return 0
     fi
     if container_exists "$name"; then
-        warn "Container ${name} exists but is not running. Removing and recreating..."
+        warn "Container ${name} ada tapi tidak running. Menghapus dan recreate..."
         sudo docker rm -f "$name"
     fi
-    log "Starting container ${name}..."
+    log "Menjalankan container ${name}..."
     sudo docker run --name "$name" "$@"
 }
 
-# Hardcoded container names for idempotency and easy identification
+# Nama container hardcoded agar idempotent dan mudah diidentifikasi
 C_COWRIE="cowrie-hp"
 C_DIONAEA="dionaea-hp"
 C_RDPY="rdpy-hp"
@@ -522,10 +522,10 @@ sudo mkdir -p "${NATS_DIR}/creds"
 
 echo "$LEAF_CREDS_CONTENT" | sudo tee "${NATS_DIR}/creds/leafnode.creds" >/dev/null
 sudo chmod 600 "${NATS_DIR}/creds/leafnode.creds"
-log "Credentials saved to: ${NATS_DIR}/creds/leafnode.creds"
+log "Credentials disimpan ke: ${NATS_DIR}/creds/leafnode.creds"
 
 # ============================================================
-# SAVE CA CERT (if TLS is enabled)
+# SIMPAN CA CERT (jika TLS aktif)
 # ============================================================
 
 TLS_BLOCK=""
@@ -534,9 +534,9 @@ NATS_CERTS_VOLUME_ARG=""
 if [[ "$NATS_TLS_ENABLED" == "true" ]]; then
     echo "$TLS_CA_CONTENT" | sudo tee "${NATS_DIR}/certs/ca.pem" >/dev/null
     sudo chmod 644 "${NATS_DIR}/certs/ca.pem"
-    log "CA cert saved to: ${NATS_DIR}/certs/ca.pem"
+    log "CA cert disimpan ke: ${NATS_DIR}/certs/ca.pem"
 
-    # TLS block for NATS leaf config
+    # Blok TLS untuk NATS leaf config
     if [[ "$TLS_SKIP_VERIFY" == "true" ]]; then
         TLS_BLOCK='
       tls {
@@ -552,7 +552,7 @@ if [[ "$NATS_TLS_ENABLED" == "true" ]]; then
     NATS_CERTS_VOLUME_ARG="-v ${NATS_DIR}/certs:/certs:ro"
 fi
 
-# Build leaf remotes from comma-separated IPs
+# Build leaf remotes dari comma-separated IPs
 LEAF_REMOTES=""
 IFS=',' read -ra HOSTS <<< "$NATS_HOSTS"
 for host in "${HOSTS[@]}"; do
@@ -564,7 +564,7 @@ for host in "${HOSTS[@]}"; do
     }"
 done
 
-# Write config (always re-generate so the latest credentials are always used)
+# Tulis config (selalu re-generate agar password terbaru selalu dipakai)
 sudo tee "${NATS_DIR}/nats-leaf.conf" > /dev/null <<LEAFEOF
 # NATS Leaf Node — Honeypot VM: ${VM_ID}
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -590,19 +590,19 @@ trace: false
 logtime: true
 LEAFEOF
 
-log "NATS leaf config written to: ${NATS_DIR}/nats-leaf.conf"
+log "NATS leaf config ditulis ke: ${NATS_DIR}/nats-leaf.conf"
 if [[ "$NATS_TLS_ENABLED" == "true" ]]; then
-    log "NATS URL scheme: ${NATS_URL_SCHEME}:// (TLS encrypted)"
-    log "CA cert mounted into container at: /certs/ca.pem"
+    log "NATS URL scheme: ${NATS_URL_SCHEME}:// (terenkripsi TLS)"
+    log "CA cert di-mount ke container di: /certs/ca.pem"
 fi
 
-# Idempotent: remove old container if config changed or not running
+# Idempotent: hapus container lama jika config berubah / tidak running
 if container_exists "nats-leaf"; then
-    warn "Container nats-leaf already exists. Recreating with latest config..."
+    warn "Container nats-leaf sudah ada. Recreating dengan config terbaru..."
     sudo docker rm -f nats-leaf
 fi
 
-log "Starting NATS Leaf Node.."
+log "Menjalankan NATS Leaf Node..."
 sudo docker run -d \
     --name nats-leaf \
     --restart unless-stopped \
@@ -618,7 +618,7 @@ sudo docker run -d \
     nats:2.10-alpine \
     -c /etc/nats/nats.conf
 
-log "NATS Leaf Node started. Waiting for connection to hub..."
+log "NATS Leaf Node started. Menunggu koneksi ke hub..."
 sleep 5
 NATS_LEAF_STATUS=$(sudo docker logs nats-leaf 2>&1 | tail -5)
 echo "$NATS_LEAF_STATUS"
@@ -662,7 +662,7 @@ sudo tee "${FB_DIR}/parsers.conf" > /dev/null <<'EOF'
 EOF
 
 # Lua reformat timestamp
-sudo tee "${FB_DIR}/reformat-timestamp.lua" > /dev/null << 'EOF'
+sudo tee "${FB_DIR}/reformat-timestamp.lua" > /dev/null <<'EOF'
 function reformat_timestamp(tag, timestamp, record)
     local s = os.date("!%Y-%m-%d %H:%M:%S", timestamp)
     local ms = string.format(".%03u", math.floor((timestamp % 1) * 1000))
@@ -876,13 +876,13 @@ sudo tee "${FB_DIR}/fluent-bit.conf" > /dev/null <<FBEOF
     Retry_Limit       False
 FBEOF
 
-# Idempotent: recreate fluent-bit if config changes
+# Idempotent: recreate fluent-bit jika config berubah
 if container_exists "fluent-bit-hp"; then
-    warn "Container fluent-bit-hp already exists. Recreating with latest config..."
+    warn "Container fluent-bit-hp sudah ada. Recreating dengan config terbaru..."
     sudo docker rm -f fluent-bit-hp
 fi
 
-log "Starting Fluent Bit..."
+log "Menjalankan Fluent Bit..."
 sudo docker run -d \
     --name fluent-bit-hp \
     --restart unless-stopped \
@@ -909,14 +909,14 @@ log "Fluent Bit started."
 # ============================================================
 
 if ! command -v zabbix_agent2 &>/dev/null; then
-    log "Installing Zabbix Agent 2..."
+    log "Menginstall Zabbix Agent 2..."
     wget -q https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu22.04_all.deb \
         -O /tmp/zabbix-release.deb
     sudo dpkg -i /tmp/zabbix-release.deb
     sudo apt-get update -y
     sudo apt-get install -y zabbix-agent2 zabbix-agent2-plugin-*
 else
-    info "Zabbix Agent 2 already installed, skipping."
+    info "Zabbix Agent 2 sudah ada, skip install."
 fi
 
 ZABBIX_CONF="/etc/zabbix/zabbix_agent2.conf"
@@ -934,7 +934,7 @@ log "Zabbix Agent 2 configured: Hostname=${ZABBIX_HOSTNAME}"
 # ============================================================
 
 bash <(curl -s https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/dlplog.sh) || \
-    warn "dlplog.sh failed to run, continuing..."
+    warn "dlplog.sh gagal dijalankan, lanjut..."
 
 # ============================================================
 # FINAL STATUS
@@ -963,7 +963,7 @@ if [[ "$NATS_TLS_ENABLED" == "true" ]]; then
     echo "  CA cert    : ${NATS_DIR}/certs/ca.pem"
     echo "  Skip verify: ${TLS_SKIP_VERIFY}"
 else
-    echo "  TLS: not active (plain connection)"
+    echo "  TLS: tidak aktif (plain connection)"
 fi
 echo ""
 echo "=== Fluent Bit Status ==="

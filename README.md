@@ -4,7 +4,7 @@ This guide covers the prerequisites, installation process, and post-installation
 
 ## Description
 
-The `installation-script-2.3.sh` script automates the deployment of a comprehensive honeypot system. It is designed to be idempotent, meaning it can be run multiple times safely without causing unintended side effects.
+The `installation-script-2.3.sh` and `id_installation-script-2.3.sh`(indonesian language)  script automates the deployment of a comprehensive honeypot system. It is designed to be idempotent, meaning it can be run multiple times safely without causing unintended side effects.
 
 **Key Features:**
 - **Honeypots Included:** Cowrie, Dionaea, RDPy, Elasticpot, Honeytrap, Conpot.
