@@ -2,6 +2,14 @@
 
 This guide covers the prerequisites, installation process, and post-installation steps for the Honeypot Installer v2.3 (TLS Edition).
 
+## Requirements
+
+Before running the script, ensure you have the following:
+1. A Linux system (Ubuntu/Debian) : Ubuntu 24.04.4 LTS
+2. IP VPS Public and access to internet for fetching latest updates and packages
+3. Minimum Requirement : 1 CPU Core, 1GB RAM and 15GB Storage
+4. VPS Recommended: 2 CPU Core, 2GB RAM and 30GB Storage
+
 ## Description
 
 The `installation-script-2.3.sh` and `id_installation-script-2.3.sh`(indonesian language)  script automates the deployment of a comprehensive honeypot system. It is designed to be idempotent, meaning it can be run multiple times safely without causing unintended side effects.
