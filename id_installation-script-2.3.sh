@@ -47,9 +47,20 @@ urlencode() {
 container_exists()  { sudo docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 
+# Protect critical ports (SSH etc.)
+PROTECTED_PORTS=(22888)
+
 # Bebaskan port: hentikan Docker container DAN proses host yang bind port tsb
 free_port() {
     local port="$1"
+
+    # Lewati port yang dilindungi
+    for p in "${PROTECTED_PORTS[@]}"; do
+        if [[ "$port" == "$p" ]]; then
+            warn "Skipping protected port $port"
+            return
+        fi
+    done
 
     # 1) Docker container yang publish port ini
     local ids
@@ -89,6 +100,17 @@ fi
 sudo -l &>/dev/null || die "User harus punya sudo permissions."
 
 # ============================================================
+# FORCE PHASE CONTROL
+# ============================================================
+
+FORCE_PHASE1=false
+
+if [[ "${1:-}" == "--phase1" ]]; then
+    FORCE_PHASE1=true
+    warn "Memaksa eksekusi Phase 1 (manual override)."
+fi
+
+# ============================================================
 # INPUT KONFIGURASI
 # ============================================================
 
@@ -103,7 +125,11 @@ if [ -f "$ENV_CACHE" ]; then
     read -p "Gunakan konfigurasi sebelumnya? [Y/n, default: Y]: " REUSE_ENV
     REUSE_ENV=${REUSE_ENV:-"Y"}
     if [[ "$REUSE_ENV" =~ ^[Yy]$ ]]; then
-        source "$ENV_CACHE"
+        if [ -r "$ENV_CACHE" ]; then
+            source "$ENV_CACHE"
+        else
+            warn "Tidak bisa membaca $ENV_CACHE — masalah permission"
+        fi
         USE_CACHE=true
         LEAF_CREDS_CONTENT=$(echo "$LEAF_CREDS_B64" | base64 -d)
         if [ "$NATS_TLS_ENABLED" = "true" ]; then
@@ -119,8 +145,8 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS Hub Configuration          ║"
 echo "╚══════════════════════════════════════╝"
-read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.151]: " NATS_HOSTS
-NATS_HOSTS=${NATS_HOSTS:-"103.19.110.151"}
+read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.157]: " NATS_HOSTS
+NATS_HOSTS=${NATS_HOSTS:-"103.19.110.157"}
 read -p "NATS Hub Port [default: 4222]: " NATS_PORT
 NATS_PORT=${NATS_PORT:-"4222"}
 LEAF_CREDS_CONTENT=""
@@ -227,7 +253,8 @@ read -p "Zabbix Hostname (nama VM ini): " ZABBIX_HOSTNAME
 
     # Simpan ke cache
     sudo touch "$ENV_CACHE"
-    sudo chmod 600 "$ENV_CACHE"
+    sudo chown "$USER":"$USER" "$ENV_CACHE"
+    chmod 600 "$ENV_CACHE"
     cat <<EOF | sudo tee "$ENV_CACHE" >/dev/null
 NATS_HOSTS="${NATS_HOSTS}"
 NATS_PORT="${NATS_PORT}"
@@ -267,7 +294,7 @@ phase1_done() { [ -f "$FLAG_FILE" ]; }
 # PHASE 1 — Pre-reboot setup
 # ============================================================
 
-if ! phase1_done; then
+if ! phase1_done || $FORCE_PHASE1; then
     log "PHASE 1: System preparation..."
 
     export DEBIAN_FRONTEND=noninteractive
@@ -386,7 +413,15 @@ if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
         log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
     fi
 
-    sudo systemctl restart sshd
+    if command -v systemctl &>/dev/null; then
+        if systemctl list-unit-files | grep -q sshd.service; then
+            sudo systemctl restart sshd
+        else
+            sudo systemctl restart ssh
+        fi
+    else
+        sudo service ssh restart
+    fi
     log "SSH port diubah ke ${NEW_SSH_PORT}."
 else
     info "SSH sudah di port ${NEW_SSH_PORT}, skip."
@@ -462,7 +497,7 @@ start_container "$C_COWRIE" \
     -p 22:22/tcp -p 23:23/tcp \
     -v cowrie-etc:/cowrie/cowrie-git/etc \
     -v cowrie-var:/cowrie/cowrie-git/var \
-    -d --cap-drop=ALL --read-only --restart unless-stopped \
+    -d --cap-drop=ALL --cap-add=NET_BIND_SERVICE --read-only --restart unless-stopped \
     "${REGISTRY_IP}/cowrie:latest"
 
 # --- Dionaea ---
@@ -662,7 +697,7 @@ sudo tee "${FB_DIR}/parsers.conf" > /dev/null <<'EOF'
 EOF
 
 # Lua reformat timestamp
-sudo tee "${FB_DIR}/reformat-timestamp.lua" > /dev/null <<'EOF'
+sudo tee "${FB_DIR}/reformat-timestamp.lua" > /dev/null << 'EOF'
 function reformat_timestamp(tag, timestamp, record)
     local s = os.date("!%Y-%m-%d %H:%M:%S", timestamp)
     local ms = string.format(".%03u", math.floor((timestamp % 1) * 1000))
@@ -876,6 +911,10 @@ sudo tee "${FB_DIR}/fluent-bit.conf" > /dev/null <<FBEOF
     Retry_Limit       False
 FBEOF
 
+# Pre-create path log cowrie agar Fluent Bit langsung daftarkan inotify watch saat startup
+sudo mkdir -p /var/lib/docker/volumes/cowrie-var/_data/log/cowrie
+sudo touch /var/lib/docker/volumes/cowrie-var/_data/log/cowrie/cowrie.json
+
 # Idempotent: recreate fluent-bit jika config berubah
 if container_exists "fluent-bit-hp"; then
     warn "Container fluent-bit-hp sudah ada. Recreating dengan config terbaru..."
@@ -920,8 +959,8 @@ else
 fi
 
 ZABBIX_CONF="/etc/zabbix/zabbix_agent2.conf"
-sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.151" "$ZABBIX_CONF" \
-    || echo "ServerActive=103.19.110.151" | sudo tee -a "$ZABBIX_CONF"
+sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.157" "$ZABBIX_CONF" \
+    || echo "ServerActive=103.19.110.157" | sudo tee -a "$ZABBIX_CONF"
 sudo sed -i "/^Hostname=/c\\Hostname=${ZABBIX_HOSTNAME}" "$ZABBIX_CONF" \
     || echo "Hostname=${ZABBIX_HOSTNAME}" | sudo tee -a "$ZABBIX_CONF"
 

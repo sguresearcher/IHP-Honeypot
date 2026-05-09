@@ -68,7 +68,7 @@ container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 # }
 
 # Protect critical ports (SSH etc.)
-PROTECTED_PORTS=(22 22888)
+PROTECTED_PORTS=(22888)
 
 free_port() {
     local port="$1"
@@ -164,8 +164,8 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS Hub Configuration          ║"
 echo "╚══════════════════════════════════════╝"
-read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.151]: " NATS_HOSTS
-NATS_HOSTS=${NATS_HOSTS:-"103.19.110.151"}
+read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.157]: " NATS_HOSTS
+NATS_HOSTS=${NATS_HOSTS:-"103.19.110.157"}
 read -p "NATS Hub Port [default: 4222]: " NATS_PORT
 NATS_PORT=${NATS_PORT:-"4222"}
 LEAF_CREDS_CONTENT=""
@@ -511,12 +511,12 @@ C_HONEYTRAP="honeytrap-hp"
 C_CONPOT="conpot-hp"
 
 # --- Cowrie ---
-free_ports 2222 23
+free_ports 22 23
 start_container "$C_COWRIE" \
-    -p 2222:22/tcp \
+    -p 22:22/tcp -p 23:23/tcp \
     -v cowrie-etc:/cowrie/cowrie-git/etc \
     -v cowrie-var:/cowrie/cowrie-git/var \
-    -d --cap-drop=ALL --read-only --restart unless-stopped \
+    -d --cap-drop=ALL --cap-add=NET_BIND_SERVICE --read-only --restart unless-stopped \
     "${REGISTRY_IP}/cowrie:latest"
 
 # --- Dionaea ---
@@ -930,6 +930,10 @@ sudo tee "${FB_DIR}/fluent-bit.conf" > /dev/null <<FBEOF
     Retry_Limit       False
 FBEOF
 
+# Pre-create cowrie log path so Fluent Bit registers inotify watch on startup
+sudo mkdir -p /var/lib/docker/volumes/cowrie-var/_data/log/cowrie
+sudo touch /var/lib/docker/volumes/cowrie-var/_data/log/cowrie/cowrie.json
+
 # Idempotent: recreate fluent-bit if config changes
 if container_exists "fluent-bit-hp"; then
     warn "Container fluent-bit-hp already exists. Recreating with latest config..."
@@ -974,8 +978,8 @@ else
 fi
 
 ZABBIX_CONF="/etc/zabbix/zabbix_agent2.conf"
-sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.151" "$ZABBIX_CONF" \
-    || echo "ServerActive=103.19.110.151" | sudo tee -a "$ZABBIX_CONF"
+sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.157" "$ZABBIX_CONF" \
+    || echo "ServerActive=103.19.110.157" | sudo tee -a "$ZABBIX_CONF"
 sudo sed -i "/^Hostname=/c\\Hostname=${ZABBIX_HOSTNAME}" "$ZABBIX_CONF" \
     || echo "Hostname=${ZABBIX_HOSTNAME}" | sudo tee -a "$ZABBIX_CONF"
 
