@@ -52,7 +52,8 @@ container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 PROTECTED_PORTS=(22888)
 
 # Bebaskan port: hentikan Docker container DAN proses host yang bind port tsb
-# TIDAK akan mematikan sshd — agar koneksi SSH tidak putus
+# Aman dari putusnya SSH: hanya release port yang dipegang sshd/ssh.socket
+# jika port SSH yang dilindungi (22888) sudah dikonfirmasi aktif.
 free_port() {
     local port="$1"
 
@@ -64,10 +65,24 @@ free_port() {
         fi
     done
 
-    # Jangan pernah bunuh sshd — cek apakah port ini dipakai sshd
-    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -q "sshd"; then
-        warn "  Port ${port} dipakai sshd — skip (tidak akan dibunuh)."
-        return
+    # Jika sshd atau ssh.socket memegang port ini, hanya release jika
+    # SSH sudah pindah ke port yang dilindungi — jika belum, skip.
+    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -qE "sshd|\"ssh\""; then
+        local protected_active=false
+        for p in "${PROTECTED_PORTS[@]}"; do
+            if sudo ss -tlnp 2>/dev/null | grep -q ":${p} "; then
+                protected_active=true
+                break
+            fi
+        done
+        if [[ "$protected_active" == "false" ]]; then
+            warn "  Port ${port} dipakai sshd dan SSH belum pindah ke port yang dilindungi — skip."
+            return
+        fi
+        # SSH sudah pindah — stop ssh.socket agar port 22 dilepas
+        warn "  Port ${port} dipegang sshd/ssh.socket tapi SSH aktif di port ${PROTECTED_PORTS[*]} — menghentikan ssh.socket..."
+        sudo systemctl stop ssh.socket 2>/dev/null || true
+        sleep 1
     fi
 
     # 1) Docker container yang publish port ini
@@ -78,7 +93,7 @@ free_port() {
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Proses host (nginx, apache, dll) yang listen di port ini — kecuali sshd
+    # 2) Proses host yang masih menggunakan port ini
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
         warn "  Host: port ${port} dipakai proses host — mematikan..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
@@ -413,6 +428,17 @@ else
         sleep 2
     fi
     info "SSH sudah di port ${NEW_SSH_PORT}, skip."
+fi
+
+# Di Ubuntu 22.04+, ssh.socket (systemd socket activation) mungkin masih
+# memegang port 22 meskipun sshd sudah pindah ke 22888. Stop dan disable
+# agar cowrie bisa bind port 22. Aman karena sshd sudah aktif di port 22888.
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    if systemctl is-active --quiet ssh.socket 2>/dev/null; then
+        sudo systemctl stop ssh.socket
+        sudo systemctl disable ssh.socket 2>/dev/null || true
+        log "ssh.socket dihentikan dan dinonaktifkan — port 22 dibebaskan untuk cowrie."
+    fi
 fi
 
 # ============================================================

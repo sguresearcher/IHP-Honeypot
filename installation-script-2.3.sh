@@ -52,7 +52,8 @@ container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 PROTECTED_PORTS=(22888)
 
 # Free a port: stop Docker containers AND host processes binding that port
-# Will NOT kill sshd — prevents SSH session from being dropped
+# Safe against SSH drops: only releases a port held by sshd/ssh.socket
+# when the protected SSH port (22888) is already confirmed active.
 free_port() {
     local port="$1"
 
@@ -64,10 +65,24 @@ free_port() {
         fi
     done
 
-    # Never kill sshd — check if this port is used by sshd
-    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -q "sshd"; then
-        warn "  Port ${port} is used by sshd — skipping (will not kill)."
-        return
+    # If sshd or ssh.socket is holding this port, only release it when
+    # SSH has already moved to the protected port — otherwise skip.
+    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -qE "sshd|\"ssh\""; then
+        local protected_active=false
+        for p in "${PROTECTED_PORTS[@]}"; do
+            if sudo ss -tlnp 2>/dev/null | grep -q ":${p} "; then
+                protected_active=true
+                break
+            fi
+        done
+        if [[ "$protected_active" == "false" ]]; then
+            warn "  Port ${port} is used by sshd and SSH has not yet moved to protected port — skipping."
+            return
+        fi
+        # SSH has moved — stop ssh.socket so it releases port 22
+        warn "  Port ${port} held by sshd/ssh.socket but SSH is active on port ${PROTECTED_PORTS[*]} — stopping ssh.socket..."
+        sudo systemctl stop ssh.socket 2>/dev/null || true
+        sleep 1
     fi
 
     # 1) Docker containers publishing this port
@@ -78,7 +93,7 @@ free_port() {
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Host processes using this port (excluding sshd)
+    # 2) Any remaining host process on this port
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
         warn "  Host: port ${port} is used by a host process — killing..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
@@ -413,6 +428,17 @@ else
         sleep 2
     fi
     info "SSH is already on port ${NEW_SSH_PORT}, skipping."
+fi
+
+# On Ubuntu 22.04+, ssh.socket (systemd socket activation) may still hold
+# port 22 even after sshd moves to 22888. Stop and disable it so cowrie
+# can bind port 22. Safe to do since sshd is now active on port 22888.
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    if systemctl is-active --quiet ssh.socket 2>/dev/null; then
+        sudo systemctl stop ssh.socket
+        sudo systemctl disable ssh.socket 2>/dev/null || true
+        log "ssh.socket stopped and disabled — port 22 released for cowrie."
+    fi
 fi
 
 # ============================================================
