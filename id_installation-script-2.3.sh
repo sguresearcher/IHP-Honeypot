@@ -6,6 +6,7 @@
 # Fix: cleanup container lama by port (nama random Docker)
 # + TLS support untuk koneksi ke NATS Hub (CA cert)
 # + Malware Uploader (dionaea binaries → NATS JetStream Object Store)
+# + Single-phase install — tidak perlu reboot
 # ============================================================
 
 set -euo pipefail
@@ -47,10 +48,11 @@ urlencode() {
 container_exists()  { sudo docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 
-# Protect critical ports (SSH etc.)
+# Port yang tidak boleh dimatikan proses-nya (SSH aktif)
 PROTECTED_PORTS=(22888)
 
 # Bebaskan port: hentikan Docker container DAN proses host yang bind port tsb
+# TIDAK akan mematikan sshd — agar koneksi SSH tidak putus
 free_port() {
     local port="$1"
 
@@ -62,6 +64,12 @@ free_port() {
         fi
     done
 
+    # Jangan pernah bunuh sshd — cek apakah port ini dipakai sshd
+    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -q "sshd"; then
+        warn "  Port ${port} dipakai sshd — skip (tidak akan dibunuh)."
+        return
+    fi
+
     # 1) Docker container yang publish port ini
     local ids
     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
@@ -70,7 +78,7 @@ free_port() {
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Proses host (nginx, apache, dll) yang listen di port ini
+    # 2) Proses host (nginx, apache, dll) yang listen di port ini — kecuali sshd
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
         warn "  Host: port ${port} dipakai proses host — mematikan..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
@@ -98,17 +106,6 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 sudo -l &>/dev/null || die "User harus punya sudo permissions."
-
-# ============================================================
-# FORCE PHASE CONTROL
-# ============================================================
-
-FORCE_PHASE1=false
-
-if [[ "${1:-}" == "--phase1" ]]; then
-    FORCE_PHASE1=true
-    warn "Memaksa eksekusi Phase 1 (manual override)."
-fi
 
 # ============================================================
 # INPUT KONFIGURASI
@@ -283,81 +280,58 @@ VM_ID="${HOSTNAME_ID}-${IP_SUFFIX}"
 log "VM_ID: ${VM_ID}"
 
 # ============================================================
-# FLAG FILE — two-phase install (reboot boundary)
+# SYSTEM PREPARATION
 # ============================================================
 
-FLAG_FILE="/var/honeypot_install_flag"
+log "Mempersiapkan sistem..."
 
-phase1_done() { [ -f "$FLAG_FILE" ]; }
-
-# ============================================================
-# PHASE 1 — Pre-reboot setup
-# ============================================================
-
-if ! phase1_done || $FORCE_PHASE1; then
-    log "PHASE 1: System preparation..."
-
-    export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -y
-    sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-        -o Dpkg::Options::="--force-confnew"
-
-    # --- Limits ---
-    LIMITS_CONF="/etc/security/limits.conf"
-    for line in \
-        "root soft nofile 65536" \
-        "root hard nofile 65536" \
-        "* soft nofile 65536" \
-        "* hard nofile 65536"; do
-        grep -qF "$line" "$LIMITS_CONF" || echo "$line" | sudo tee -a "$LIMITS_CONF" >/dev/null
-    done
-
-    # --- Sysctl ---
-    SYSCTL_CONF="/etc/sysctl.conf"
-    declare -A SYSCTL_MAP=(
-        ["net.core.somaxconn"]="1024"
-        ["net.core.netdev_max_backlog"]="5000"
-        ["net.core.rmem_max"]="16777216"
-        ["net.core.wmem_max"]="16777216"
-    )
-    for key in "${!SYSCTL_MAP[@]}"; do
-        val="${SYSCTL_MAP[$key]}"
-        if grep -q "^${key}" "$SYSCTL_CONF"; then
-            sudo sed -i "/^${key}/c\\${key} = ${val}" "$SYSCTL_CONF"
-        else
-            echo "${key} = ${val}" | sudo tee -a "$SYSCTL_CONF" >/dev/null
-        fi
-    done
-    sudo sysctl -p
-
-    # --- Swap ---
-    if ! swapon --show | grep -q /swapfile; then
-        sudo fallocate -l 1G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-        grep -qF '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-        log "Swap 1G aktif."
-    else
-        info "Swap sudah ada, skip."
-    fi
-
-    sudo touch "$FLAG_FILE"
-    log "PHASE 1 selesai. Reboot diperlukan..."
-    read -p "Reboot sekarang? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || { warn "Jalankan ulang script setelah reboot manual."; exit 0; }
-    sudo reboot
-    exit 0
-fi
-
-# ============================================================
-# PHASE 2 — Post-reboot: Docker + Honeypots + NATS + Fluent Bit
-# ============================================================
-
-log "PHASE 2: Instalasi Docker dan Honeypot containers..."
-
-# Pastikan tools port-management tersedia
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    -o Dpkg::Options::="--force-confnew"
 sudo apt-get install -y psmisc iproute2 &>/dev/null || true
+
+# --- Limits ---
+LIMITS_CONF="/etc/security/limits.conf"
+for line in \
+    "root soft nofile 65536" \
+    "root hard nofile 65536" \
+    "* soft nofile 65536" \
+    "* hard nofile 65536"; do
+    grep -qF "$line" "$LIMITS_CONF" || echo "$line" | sudo tee -a "$LIMITS_CONF" >/dev/null
+done
+# Terapkan ke sesi ini langsung tanpa reboot
+ulimit -n 65536 2>/dev/null || true
+
+# --- Sysctl ---
+SYSCTL_CONF="/etc/sysctl.conf"
+declare -A SYSCTL_MAP=(
+    ["net.core.somaxconn"]="1024"
+    ["net.core.netdev_max_backlog"]="5000"
+    ["net.core.rmem_max"]="16777216"
+    ["net.core.wmem_max"]="16777216"
+)
+for key in "${!SYSCTL_MAP[@]}"; do
+    val="${SYSCTL_MAP[$key]}"
+    if grep -q "^${key}" "$SYSCTL_CONF"; then
+        sudo sed -i "/^${key}/c\\${key} = ${val}" "$SYSCTL_CONF"
+    else
+        echo "${key} = ${val}" | sudo tee -a "$SYSCTL_CONF" >/dev/null
+    fi
+done
+sudo sysctl -p
+
+# --- Swap ---
+if ! swapon --show | grep -q /swapfile; then
+    sudo fallocate -l 1G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    grep -qF '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    log "Swap 1G aktif."
+else
+    info "Swap sudah ada, skip."
+fi
 
 # ============================================================
 # DOCKER
@@ -406,24 +380,38 @@ if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
     warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
     read -p "Lanjut? (y/n) " -r
     [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
-    sudo sed -i -e "s/^#\\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-    
+    sudo sed -i -e "s/^#\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
     fi
 
-    if command -v systemctl &>/dev/null; then
-        if systemctl list-unit-files | grep -q sshd.service; then
+    if systemctl list-unit-files 2>/dev/null | grep -q sshd.service; then
+        sudo systemctl restart sshd
+    else
+        sudo systemctl restart ssh
+    fi
+
+    # Verifikasi sshd sudah pindah ke port baru sebelum lanjut
+    sleep 2
+    if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT} "; then
+        log "SSH port berhasil diubah ke ${NEW_SSH_PORT}."
+    else
+        warn "SSH mungkin belum aktif di port ${NEW_SSH_PORT}. Pastikan kamu bisa reconnect via port ${NEW_SSH_PORT} sebelum lanjut."
+    fi
+else
+    # sshd_config sudah menunjuk ke port baru, tapi pastikan sshd
+    # benar-benar sudah listening di port tersebut (bukan masih di 22)
+    if ! sudo ss -tlnp | grep -q ":${NEW_SSH_PORT} "; then
+        warn "sshd_config sudah Port ${NEW_SSH_PORT} tapi sshd belum listening di port itu. Merestart sshd..."
+        if systemctl list-unit-files 2>/dev/null | grep -q sshd.service; then
             sudo systemctl restart sshd
         else
             sudo systemctl restart ssh
         fi
-    else
-        sudo service ssh restart
+        sleep 2
     fi
-    log "SSH port diubah ke ${NEW_SSH_PORT}."
-else
     info "SSH sudah di port ${NEW_SSH_PORT}, skip."
 fi
 

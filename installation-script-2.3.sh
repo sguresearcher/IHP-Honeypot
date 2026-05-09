@@ -6,6 +6,7 @@
 # Fix: cleanup old containers by port (random Docker names)
 # + TLS support for connection to NATS Hub (CA cert)
 # + Malware Uploader (dionaea binaries → NATS JetStream Object Store)
+# + Single-phase install — no reboot required
 # ============================================================
 
 set -euo pipefail
@@ -47,39 +48,27 @@ urlencode() {
 container_exists()  { sudo docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
 container_running() { sudo docker ps    --format '{{.Names}}' | grep -qx "$1"; }
 
-# Free a port: stop Docker containers AND host processes binding that port
-# free_port() {
-#     local port="$1"
-
-#     # 1) Docker containers publishing this port
-#     local ids
-#     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
-#     if [[ -n "$ids" ]]; then
-#         warn "  Docker: port ${port} is used by a container — stopping..."
-#         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
-#     fi
-
-#     # 2) Host processes (nginx, apache, etc.) listening on this port
-#     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
-#         warn "  Host: port ${port} is used by a host process — killing..."
-#         sudo fuser -k "${port}/tcp" 2>/dev/null || true
-#         sudo fuser -k "${port}/udp" 2>/dev/null || true
-#     fi
-# }
-
-# Protect critical ports (SSH etc.)
+# Ports that must never be killed (active SSH)
 PROTECTED_PORTS=(22888)
 
+# Free a port: stop Docker containers AND host processes binding that port
+# Will NOT kill sshd — prevents SSH session from being dropped
 free_port() {
     local port="$1"
 
-    # 🔒 Skip protected ports
+    # Skip protected ports
     for p in "${PROTECTED_PORTS[@]}"; do
         if [[ "$port" == "$p" ]]; then
             warn "Skipping protected port $port"
             return
         fi
     done
+
+    # Never kill sshd — check if this port is used by sshd
+    if sudo ss -tlnup 2>/dev/null | grep ":${port} " | grep -q "sshd"; then
+        warn "  Port ${port} is used by sshd — skipping (will not kill)."
+        return
+    fi
 
     # 1) Docker containers publishing this port
     local ids
@@ -89,7 +78,7 @@ free_port() {
         echo "$ids" | xargs sudo docker rm -f 2>/dev/null || true
     fi
 
-    # 2) Host processes using this port
+    # 2) Host processes using this port (excluding sshd)
     if sudo ss -tlnup 2>/dev/null | grep -q ":${port} "; then
         warn "  Host: port ${port} is used by a host process — killing..."
         sudo fuser -k "${port}/tcp" 2>/dev/null || true
@@ -117,17 +106,6 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 sudo -l &>/dev/null || die "User must have sudo permissions."
-
-# ============================================================
-# FORCE PHASE CONTROL
-# ============================================================
-
-FORCE_PHASE1=false
-
-if [[ "${1:-}" == "--phase1" ]]; then
-    FORCE_PHASE1=true
-    warn "Forcing Phase 1 execution (manual override)."
-fi
 
 # ============================================================
 # CONFIGURATION INPUT
@@ -302,81 +280,58 @@ VM_ID="${HOSTNAME_ID}-${IP_SUFFIX}"
 log "VM_ID: ${VM_ID}"
 
 # ============================================================
-# FLAG FILE — two-phase install (reboot boundary)
+# SYSTEM PREPARATION
 # ============================================================
 
-FLAG_FILE="/var/honeypot_install_flag"
+log "Preparing system..."
 
-phase1_done() { [ -f "$FLAG_FILE" ]; }
-
-# ============================================================
-# PHASE 1 — Pre-reboot setup
-# ============================================================
-
-if ! phase1_done || $FORCE_PHASE1; then
-    log "PHASE 1: System preparation..."
-
-    export DEBIAN_FRONTEND=noninteractive
-    sudo apt-get update -y
-    sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-        -o Dpkg::Options::="--force-confnew"
-
-    # --- Limits ---
-    LIMITS_CONF="/etc/security/limits.conf"
-    for line in \
-        "root soft nofile 65536" \
-        "root hard nofile 65536" \
-        "* soft nofile 65536" \
-        "* hard nofile 65536"; do
-        grep -qF "$line" "$LIMITS_CONF" || echo "$line" | sudo tee -a "$LIMITS_CONF" >/dev/null
-    done
-
-    # --- Sysctl ---
-    SYSCTL_CONF="/etc/sysctl.conf"
-    declare -A SYSCTL_MAP=(
-        ["net.core.somaxconn"]="1024"
-        ["net.core.netdev_max_backlog"]="5000"
-        ["net.core.rmem_max"]="16777216"
-        ["net.core.wmem_max"]="16777216"
-    )
-    for key in "${!SYSCTL_MAP[@]}"; do
-        val="${SYSCTL_MAP[$key]}"
-        if grep -q "^${key}" "$SYSCTL_CONF"; then
-            sudo sed -i "/^${key}/c\\${key} = ${val}" "$SYSCTL_CONF"
-        else
-            echo "${key} = ${val}" | sudo tee -a "$SYSCTL_CONF" >/dev/null
-        fi
-    done
-    sudo sysctl -p
-
-    # --- Swap ---
-    if ! swapon --show | grep -q /swapfile; then
-        sudo fallocate -l 1G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-        grep -qF '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
-        log "1G Swap is active."
-    else
-        info "Swap already exists, skipping."
-    fi
-
-    sudo touch "$FLAG_FILE"
-    log "PHASE 1 complete. Reboot required..."
-    read -p "Reboot now? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || { warn "Re-run the script after manual reboot."; exit 0; }
-    sudo reboot
-    exit 0
-fi
-
-# ============================================================
-# PHASE 2 — Post-reboot: Docker + Honeypots + NATS + Fluent Bit
-# ============================================================
-
-log "PHASE 2: Installing Docker and Honeypot containers..."
-
-# Ensure port-management tools are available
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update -y
+sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    -o Dpkg::Options::="--force-confnew"
 sudo apt-get install -y psmisc iproute2 &>/dev/null || true
+
+# --- Limits ---
+LIMITS_CONF="/etc/security/limits.conf"
+for line in \
+    "root soft nofile 65536" \
+    "root hard nofile 65536" \
+    "* soft nofile 65536" \
+    "* hard nofile 65536"; do
+    grep -qF "$line" "$LIMITS_CONF" || echo "$line" | sudo tee -a "$LIMITS_CONF" >/dev/null
+done
+# Apply to the current session immediately without reboot
+ulimit -n 65536 2>/dev/null || true
+
+# --- Sysctl ---
+SYSCTL_CONF="/etc/sysctl.conf"
+declare -A SYSCTL_MAP=(
+    ["net.core.somaxconn"]="1024"
+    ["net.core.netdev_max_backlog"]="5000"
+    ["net.core.rmem_max"]="16777216"
+    ["net.core.wmem_max"]="16777216"
+)
+for key in "${!SYSCTL_MAP[@]}"; do
+    val="${SYSCTL_MAP[$key]}"
+    if grep -q "^${key}" "$SYSCTL_CONF"; then
+        sudo sed -i "/^${key}/c\\${key} = ${val}" "$SYSCTL_CONF"
+    else
+        echo "${key} = ${val}" | sudo tee -a "$SYSCTL_CONF" >/dev/null
+    fi
+done
+sudo sysctl -p
+
+# --- Swap ---
+if ! swapon --show | grep -q /swapfile; then
+    sudo fallocate -l 1G /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    grep -qF '/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+    log "1G Swap is active."
+else
+    info "Swap already exists, skipping."
+fi
 
 # ============================================================
 # DOCKER
@@ -425,24 +380,38 @@ if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
     warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
     read -p "Continue? (y/n) " -r
     [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
-    sudo sed -i -e "s/^#\\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-    
+    sudo sed -i -e "s/^#\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
     fi
 
-    if command -v systemctl &>/dev/null; then
-        if systemctl list-unit-files | grep -q sshd.service; then
+    if systemctl list-unit-files 2>/dev/null | grep -q sshd.service; then
+        sudo systemctl restart sshd
+    else
+        sudo systemctl restart ssh
+    fi
+
+    # Verify sshd is actually listening on the new port before continuing
+    sleep 2
+    if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT} "; then
+        log "SSH port successfully changed to ${NEW_SSH_PORT}."
+    else
+        warn "SSH may not yet be active on port ${NEW_SSH_PORT}. Ensure you can reconnect via port ${NEW_SSH_PORT} before continuing."
+    fi
+else
+    # sshd_config already points to the new port, but verify sshd
+    # is actually listening there (not still on port 22)
+    if ! sudo ss -tlnp | grep -q ":${NEW_SSH_PORT} "; then
+        warn "sshd_config already has Port ${NEW_SSH_PORT} but sshd is not yet listening there. Restarting sshd..."
+        if systemctl list-unit-files 2>/dev/null | grep -q sshd.service; then
             sudo systemctl restart sshd
         else
             sudo systemctl restart ssh
         fi
-    else
-        sudo service ssh restart
+        sleep 2
     fi
-    log "SSH port changed to ${NEW_SSH_PORT}."
-else
     info "SSH is already on port ${NEW_SSH_PORT}, skipping."
 fi
 
@@ -656,7 +625,7 @@ if container_exists "nats-leaf"; then
     sudo docker rm -f nats-leaf
 fi
 
-log "Starting NATS Leaf Node.."
+log "Starting NATS Leaf Node..."
 sudo docker run -d \
     --name nats-leaf \
     --restart unless-stopped \
