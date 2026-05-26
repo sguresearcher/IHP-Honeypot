@@ -29,6 +29,7 @@ log()    { echo "[+] $*"; }
 warn()   { echo "[!] $*"; }
 info()   { echo "[-] $*"; }
 die()    { echo "[✗] $*" >&2; exit 1; }
+step()   { echo ""; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; echo "  $*"; echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"; }
 
 # URL-encode a string (RFC 3986)
 urlencode() {
@@ -86,6 +87,7 @@ free_ports() {
 # PREFLIGHT CHECKS
 # ============================================================
 
+step "[STEP 1/12] PREFLIGHT CHECK"
 read -p "Do you accept the terms and conditions? (y/n) " -r
 [[ $REPLY =~ ^[Yy]$ ]] || { echo "Cancelled."; exit 1; }
 
@@ -98,6 +100,7 @@ sudo -l &>/dev/null || die "User must have sudo permissions."
 # ============================================================
 # CONFIGURATION INPUT
 # ============================================================
+step "[STEP 2/12] CONFIGURATION INPUT"
 
 ENV_CACHE="/var/honeypot_env.cache"
 USE_CACHE=false
@@ -257,6 +260,8 @@ EOF
 
 fi # end USE_CACHE = false
 
+step "[STEP 3/12] AUTO VM ID"
+
 # ============================================================
 # AUTO VM ID
 # ============================================================
@@ -271,11 +276,18 @@ log "VM_ID: ${VM_ID}"
 # SYSTEM PREPARATION
 # ============================================================
 
+step "[STEP 4/12] SYSTEM PREPARATION — APT UPDATE & UPGRADE"
 log "Preparing system..."
 
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+export NEEDRESTART_SUSPEND=1
+
+log "Running apt-get update..."
 sudo apt-get update -y
-sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+log "Running apt-get upgrade (non-interactive, needrestart suppressed)..."
+sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 \
+    apt-get upgrade -y \
     -o Dpkg::Options::="--force-confnew"
 sudo apt-get install -y psmisc iproute2 &>/dev/null || true
 
@@ -324,6 +336,7 @@ fi
 # ============================================================
 # DOCKER
 # ============================================================
+step "[STEP 5/12] DOCKER INSTALLATION"
 
 if ! command -v docker &>/dev/null; then
     log "Installing Docker..."
@@ -360,6 +373,7 @@ fi
 # ============================================================
 # SSH PORT CHANGE
 # ============================================================
+step "[STEP 6/12] SSH PORT CHANGE"
 
 NEW_SSH_PORT="22888"
 CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
@@ -405,6 +419,7 @@ fi
 # ============================================================
 # PULL IMAGES
 # ============================================================
+step "[STEP 7/12] PULLING HONEYPOT DOCKER IMAGES"
 
 IMAGES=(
     "cowrie" "conpot" "rdpy" "elasticpot" "dionaea" "honeytrap"
@@ -423,6 +438,7 @@ done
 # ============================================================
 # VOLUMES
 # ============================================================
+step "[STEP 8/12] CREATING DOCKER VOLUMES"
 
 VOLUMES=("cowrie-var" "cowrie-etc" "gridpot" "elasticpot" "dionaea" "honeytrap-data" "conpot-data")
 
@@ -442,6 +458,7 @@ sudo mkdir -p /var/lib/docker/volumes/rdpy/_data
 # HONEYPOT CONTAINERS
 # Idempotent: skip if container is already running, recreate if exited
 # ============================================================
+step "[STEP 9/12] STARTING HONEYPOT CONTAINERS"
 
 start_container() {
     local name="$1"
@@ -524,6 +541,7 @@ start_container "$C_CONPOT" \
 # ============================================================
 # NATS LEAF NODE
 # ============================================================
+step "[STEP 10/12] NATS LEAF NODE SETUP"
 
 NATS_DIR="/opt/nats-leaf"
 sudo mkdir -p "${NATS_DIR}"
@@ -636,6 +654,7 @@ echo "$NATS_LEAF_STATUS"
 # ============================================================
 # FLUENT BIT
 # ============================================================
+step "[STEP 11/12] FLUENT BIT SETUP"
 
 FB_DIR="/opt/fluent-bit-hp"
 sudo mkdir -p "${FB_DIR}/state"
@@ -921,6 +940,7 @@ log "Fluent Bit started."
 # ============================================================
 # ZABBIX AGENT
 # ============================================================
+step "[STEP 12/12] ZABBIX AGENT INSTALLATION"
 
 if ! command -v zabbix_agent2 &>/dev/null; then
     log "Installing Zabbix Agent 2..."
