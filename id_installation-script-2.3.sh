@@ -267,7 +267,29 @@ step "[STEP 3/12] AUTO VM ID"
 # ============================================================
 
 HOSTNAME_ID=$(hostname | tr '[:upper:]' '[:lower:]')
-IP_SUFFIX=$(curl -s --max-time 5 ifconfig.me 2>/dev/null | awk -F. '{print $4}')
+
+# Menggunakan timeout (GNU coreutils) jika tersedia untuk mencegah dns lookup hang indefinitely
+IP_PUBLIC=""
+if command -v timeout &>/dev/null; then
+    IP_PUBLIC=$(timeout 5 curl -s --max-time 5 ifconfig.me 2>/dev/null || true)
+else
+    IP_PUBLIC=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || true)
+fi
+
+IP_SUFFIX=""
+if [[ -n "$IP_PUBLIC" && "$IP_PUBLIC" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    IP_SUFFIX=$(echo "$IP_PUBLIC" | awk -F. '{print $4}')
+fi
+
+# Fallback ke IP lokal jika gagal mendapatkan IP publik
+if [[ -z "$IP_SUFFIX" ]]; then
+    info "Gagal mendapatkan IP publik, mencoba menggunakan IP lokal..."
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
+    if [[ -n "$LOCAL_IP" && "$LOCAL_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        IP_SUFFIX=$(echo "$LOCAL_IP" | awk -F. '{print $4}')
+    fi
+fi
+
 IP_SUFFIX=${IP_SUFFIX:-"unknown"}
 VM_ID="${HOSTNAME_ID}-${IP_SUFFIX}"
 log "VM_ID: ${VM_ID}"
