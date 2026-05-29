@@ -311,7 +311,7 @@ log "Menjalankan apt-get upgrade (non-interactive, needrestart disupres)..."
 sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a NEEDRESTART_SUSPEND=1 \
     apt-get upgrade -y \
     -o Dpkg::Options::="--force-confnew"
-sudo apt-get install -y psmisc iproute2 &>/dev/null || true
+sudo apt-get install -y psmisc iproute2 curl &>/dev/null || true
 
 # --- Limits ---
 LIMITS_CONF="/etc/security/limits.conf"
@@ -362,7 +362,15 @@ step "[STEP 5/12] INSTALASI DOCKER"
 
 if ! command -v docker &>/dev/null; then
     log "Menginstall Docker..."
-    curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    if command -v curl &>/dev/null; then
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    elif command -v wget &>/dev/null; then
+        wget -qO /tmp/get-docker.sh https://get.docker.com
+    else
+        warn "curl dan wget tidak ditemukan. Mencoba menginstall curl..."
+        sudo apt-get update -y && sudo apt-get install -y curl
+        curl -fsSL https://get.docker.com -o /tmp/get-docker.sh
+    fi
     sudo sh /tmp/get-docker.sh
     sudo groupadd docker 2>/dev/null || true
     sudo usermod -aG docker "$USER"
