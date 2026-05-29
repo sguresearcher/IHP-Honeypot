@@ -59,6 +59,25 @@ free_port() {
         return
     fi
 
+    # Check if the port to be freed is the currently active SSH port
+    local active_ssh_port=""
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        active_ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
+    fi
+
+    if [[ "$port" == "$active_ssh_port" ]]; then
+        echo ""
+        echo "╔════════════════════════════════════════════════════════════════╗"
+        echo "║  Warning: Port $port is your currently active SSH port!          ║"
+        echo "║  To run the Honeypot on port $port, you must:                  ║"
+        echo "║  1. Ensure the new SSH port (22888) is active and accessible.  ║"
+        echo "║  2. Disconnect from this SSH session.                          ║"
+        echo "║  3. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
+        echo "║  4. Run this script again to complete the installation.        ║"
+        echo "╚════════════════════════════════════════════════════════════════╝"
+        die "Installation suspended. Please reconnect using port 22888."
+    fi
+
     # 1) Docker containers publishing this port
     local ids
     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
