@@ -432,47 +432,67 @@ fi
 step "[STEP 6/12] PERUBAHAN PORT SSH"
 
 NEW_SSH_PORT="22888"
-CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 
-if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
-    warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
-    read -p "Lanjut? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
+# Cek apakah sistem menggunakan systemd socket activation untuk SSH (Ubuntu 22.10+)
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    warn "Sistem menggunakan systemd socket activation. Mengonfigurasi port SSH via systemd override..."
     
-    # Ganti jika ada, atau tambahkan jika tidak ada sama sekali
-    if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
-        sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-    else
-        echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
-    fi
+    # Buat direktori drop-in jika belum ada
+    sudo mkdir -p /etc/systemd/system/ssh.socket.d
+    
+    # Tulis konfigurasi override untuk mengubah port ke 22888
+    sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf > /dev/null <<EOF
+[Socket]
+ListenStream=
+ListenStream=${NEW_SSH_PORT}
+EOF
 
+    # Izinkan port di firewall UFW
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
     fi
+
+    # Reload systemd daemon dan restart/enable socket
+    log "Reloading systemd dan merestart ssh.socket..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable ssh.socket 2>/dev/null || true
+    sudo systemctl restart ssh.socket
+    sleep 2
 else
-    info "sshd_config sudah Port ${NEW_SSH_PORT}."
+    # Metode Tradisional (mengubah sshd_config)
+    CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
+
+    if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
+        warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
+        read -p "Lanjut? (y/n) " -r
+        [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
+        
+        # Ganti jika ada, atau tambahkan jika tidak ada
+        if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
+            sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+        else
+            echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        fi
+
+        if command -v ufw &>/dev/null; then
+            sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
+            log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
+        fi
+    else
+        info "sshd_config sudah Port ${NEW_SSH_PORT}."
+    fi
+
+    # (Re)start ssh service tradisional
+    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        sudo systemctl restart sshd
+    else
+        sudo systemctl restart ssh
+    fi
+    sleep 2
 fi
 
-# Hentikan ssh.socket SEBELUM restart sshd.
-# Di Ubuntu 22.04+, ssh.socket (systemd socket activation) memegang port 22
-# secara terpisah dari sshd.service. Harus dihentikan agar:
-#   1. sshd bisa mengikat port 22888 tanpa konflik
-#   2. port 22 bebas untuk container cowrie honeypot
-if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-    sudo systemctl stop ssh.socket 2>/dev/null || true
-    sudo systemctl disable ssh.socket 2>/dev/null || true
-    info "ssh.socket dihentikan dan dinonaktifkan."
-fi
-
-# (Re)start sshd untuk menerapkan konfigurasi port
-if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
-    sudo systemctl restart sshd
-else
-    sudo systemctl restart ssh
-fi
-sleep 2
-
+# Verifikasi keaktifan port baru
 if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT}[[:space:]]"; then
     log "SSH aktif di port ${NEW_SSH_PORT}."
 else

@@ -432,47 +432,67 @@ fi
 step "[STEP 6/12] SSH PORT CHANGE"
 
 NEW_SSH_PORT="22888"
-CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 
-if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
-    warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
-    read -p "Continue? (y/n) " -r
-    [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
+# Check if the system uses systemd socket activation for SSH (Ubuntu 22.10+)
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    warn "System uses systemd socket activation. Configuring SSH port via systemd override..."
     
-    # Replace if exists, or append to the end of file if it doesn't exist
-    if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
-        sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-    else
-        echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
-    fi
+    # Create the drop-in directory if it does not exist
+    sudo mkdir -p /etc/systemd/system/ssh.socket.d
+    
+    # Write the override config to change the port to 22888
+    sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf > /dev/null <<EOF
+[Socket]
+ListenStream=
+ListenStream=${NEW_SSH_PORT}
+EOF
 
+    # Allow the port in UFW firewall
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
     fi
+
+    # Reload systemd daemon and restart/enable the socket
+    log "Reloading systemd and restarting ssh.socket..."
+    sudo systemctl daemon-reload
+    sudo systemctl enable ssh.socket 2>/dev/null || true
+    sudo systemctl restart ssh.socket
+    sleep 2
 else
-    info "sshd_config already has Port ${NEW_SSH_PORT}."
+    # Traditional method (editing sshd_config)
+    CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
+
+    if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
+        warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
+        read -p "Continue? (y/n) " -r
+        [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
+        
+        # Replace if exists, or append if it doesn't exist
+        if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
+            sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+        else
+            echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+        fi
+
+        if command -v ufw &>/dev/null; then
+            sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
+            log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
+        fi
+    else
+        info "sshd_config already has Port ${NEW_SSH_PORT}."
+    fi
+
+    # (Re)start traditional ssh service
+    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        sudo systemctl restart sshd
+    else
+        sudo systemctl restart ssh
+    fi
+    sleep 2
 fi
 
-# Stop ssh.socket BEFORE restarting sshd.
-# On Ubuntu 22.04+, ssh.socket (systemd socket activation) holds port 22
-# independently of sshd.service. It must be stopped so that:
-#   1. sshd can fully own port 22888 without conflict
-#   2. port 22 is freed for the cowrie honeypot container
-if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-    sudo systemctl stop ssh.socket 2>/dev/null || true
-    sudo systemctl disable ssh.socket 2>/dev/null || true
-    info "ssh.socket stopped and disabled."
-fi
-
-# (Re)start sshd to apply the port config
-if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
-    sudo systemctl restart sshd
-else
-    sudo systemctl restart ssh
-fi
-sleep 2
-
+# Verify if the new port is active
 if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT}[[:space:]]"; then
     log "SSH is active on port ${NEW_SSH_PORT}."
 else
