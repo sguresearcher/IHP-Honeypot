@@ -66,16 +66,23 @@ free_port() {
     fi
 
     if [[ "$port" == "$active_ssh_port" ]]; then
-        echo ""
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║  Warning: Port $port is your currently active SSH port!          ║"
-        echo "║  To run the Honeypot on port $port, you must:                  ║"
-        echo "║  1. Ensure the new SSH port (22888) is active and accessible.  ║"
-        echo "║  2. Disconnect from this SSH session.                          ║"
-        echo "║  3. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
-        echo "║  4. Run this script again to complete the installation.        ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        die "Installation suspended. Please reconnect using port 22888."
+        # Only suspend if port 22888 is actually active and listening
+        if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════════╗"
+            echo "║  Warning: Port $port is your currently active SSH port!          ║"
+            echo "║  The new SSH port (22888) is active and listening.             ║"
+            echo "║  To run the Honeypot on port $port, you must:                  ║"
+            echo "║  1. Disconnect from this SSH session.                          ║"
+            echo "║  2. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
+            echo "║  3. Run this script again to complete the installation.        ║"
+            echo "╚════════════════════════════════════════════════════════════════╝"
+            die "Installation suspended. Please reconnect using port 22888."
+        else
+            warn "Port $port is your currently active SSH port, but port 22888 is not active/listening yet."
+            warn "Skipping the cleanup of port $port to prevent you from getting disconnected."
+            return
+        fi
     fi
 
     # 1) Docker containers publishing this port
@@ -425,13 +432,20 @@ fi
 step "[STEP 6/12] SSH PORT CHANGE"
 
 NEW_SSH_PORT="22888"
-CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
+CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 
 if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
     warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
     read -p "Continue? (y/n) " -r
     [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
-    sudo sed -i -e "s/^#\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+    
+    # Replace if exists, or append to the end of file if it doesn't exist
+    if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
+        sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+    else
+        echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+    fi
+
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."

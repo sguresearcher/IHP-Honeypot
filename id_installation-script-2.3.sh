@@ -66,16 +66,23 @@ free_port() {
     fi
 
     if [[ "$port" == "$active_ssh_port" ]]; then
-        echo ""
-        echo "╔════════════════════════════════════════════════════════════════╗"
-        echo "║  Peringatan: Port $port adalah port SSH aktif Anda saat ini!     ║"
-        echo "║  Untuk menjalankan Honeypot di port $port, Anda harus:          ║"
-        echo "║  1. Pastikan port SSH baru (22888) sudah aktif.                ║"
-        echo "║  2. Keluar dari sesi SSH ini.                                  ║"
-        echo "║  3. Masuk kembali menggunakan port 22888 (ssh -p 22888 ...).   ║"
-        echo "║  4. Jalankan kembali script ini untuk menyelesaikan instalasi. ║"
-        echo "╚════════════════════════════════════════════════════════════════╝"
-        die "Instalasi ditangguhkan. Silakan masuk kembali menggunakan port 22888."
+        # Hanya tangguhkan jika port 22888 benar-benar sudah aktif dan mendengarkan
+        if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
+            echo ""
+            echo "╔════════════════════════════════════════════════════════════════╗"
+            echo "║  Peringatan: Port $port adalah port SSH aktif Anda saat ini!     ║"
+            echo "║  Port SSH baru (22888) sudah aktif dan mendengarkan.           ║"
+            echo "║  Untuk menjalankan Honeypot di port $port, Anda harus:          ║"
+            echo "║  1. Keluar dari sesi SSH ini.                                  ║"
+            echo "║  2. Masuk kembali menggunakan port 22888 (ssh -p 22888 ...).   ║"
+            echo "║  3. Jalankan kembali script ini untuk menyelesaikan instalasi. ║"
+            echo "╚════════════════════════════════════════════════════════════════╝"
+            die "Instalasi ditangguhkan. Silakan masuk kembali menggunakan port 22888."
+        else
+            warn "Port $port adalah port SSH aktif Anda, tetapi port 22888 belum aktif/listening."
+            warn "Melewati pembersihan port $port agar koneksi Anda tidak terputus."
+            return
+        fi
     fi
 
     # 1) Docker container yang publish port ini
@@ -425,13 +432,20 @@ fi
 step "[STEP 6/12] PERUBAHAN PORT SSH"
 
 NEW_SSH_PORT="22888"
-CURRENT_SSH_PORT=$(grep -E "^Port " /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
+CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
 
 if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
     warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
     read -p "Lanjut? (y/n) " -r
     [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
-    sudo sed -i -e "s/^#\?Port .*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+    
+    # Ganti jika ada, atau tambahkan jika tidak ada sama sekali
+    if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
+        sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
+    else
+        echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+    fi
+
     if command -v ufw &>/dev/null; then
         sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
         log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
