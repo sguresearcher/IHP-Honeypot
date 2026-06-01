@@ -130,3 +130,48 @@ If you want to go back to phase 1, use this command:
 ```bash
 ./installation-script-2.3.sh --phase1
 ```
+
+# Honeypot Port Mapping
+
+Service exposure across deployed honeypot sensors.
+
+| No | Honeypot Name | Port | Transport |
+|---:|---------------|------|-----------|
+| 01 | Cowrie | 22/tcp | TCP |
+| 02 | Cowrie | 23/tcp | TCP |
+| 03 | Dionaea | 21 | TCP |
+| 04 | Dionaea | 42 | TCP |
+| 05 | Dionaea | 69/udp | UDP |
+| 06 | Dionaea | 80 | TCP |
+| 07 | Dionaea | 135 | TCP |
+| 08 | Dionaea | 443 | TCP |
+| 09 | Dionaea | 445 | TCP |
+| 10 | Dionaea | 1433 | TCP |
+| 11 | Dionaea | 1723 | TCP |
+| 12 | Dionaea | 1883 | TCP |
+| 13 | Dionaea | 3306 | TCP |
+| 14 | Dionaea | 5060 | TCP |
+| 15 | Dionaea | 5060/udp | UDP |
+| 16 | Dionaea | 5061 | TCP |
+| 17 | Dionaea | 11211 | TCP |
+| 18 | RDPY | 3389 | TCP |
+| 19 | Honeytrap | 2222 | TCP |
+| 20 | Honeytrap | 8545 | TCP |
+| 21 | Honeytrap | 5900 | TCP |
+| 22 | Honeytrap | 25 | TCP |
+| 23 | Honeytrap | 5037 | TCP |
+| 24 | Honeytrap | 631 | TCP |
+| 25 | Honeytrap | 389 | TCP |
+| 26 | Honeytrap | 6379 | TCP |
+| 27 | Conpot | 8000:8800 | TCP |
+| 28 | Conpot | 10201 | TCP |
+| 29 | Conpot | 5020 | TCP |
+| 30 | Conpot | 16100/udp | UDP |
+| 31 | Conpot | 47808/udp | UDP |
+| 32 | Conpot | 6230/udp | UDP |
+| 33 | Conpot | 2121 | TCP |
+| 34 | Conpot | 6969/udp | UDP |
+| 35 | Conpot | 44818 | TCP |
+| 36 | Elasticpot | 9200/tcp | TCP |
+
+_36 entries · TCP / UDP services_

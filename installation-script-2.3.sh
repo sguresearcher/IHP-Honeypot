@@ -68,16 +68,28 @@ free_port() {
     if [[ "$port" == "$active_ssh_port" ]]; then
         # Only suspend if port 22888 is actually active and listening
         if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════════╗"
-            echo "║  Warning: Port $port is your currently active SSH port!          ║"
-            echo "║  The new SSH port (22888) is active and listening.             ║"
-            echo "║  To run the Honeypot on port $port, you must:                  ║"
-            echo "║  1. Disconnect from this SSH session.                          ║"
-            echo "║  2. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
-            echo "║  3. Run this script again to complete the installation.        ║"
-            echo "╚════════════════════════════════════════════════════════════════╝"
-            die "Installation suspended. Please reconnect using port 22888."
+            # Check if running inside tmux or screen
+            if [[ -n "${TMUX:-}" || -n "${STY:-}" ]]; then
+                warn "Port $port is your currently active SSH port."
+                info "Detected a safe terminal session (tmux/screen) in the background."
+                info "Your SSH connection will be terminated in 3 seconds, but the script will continue running in the background."
+                info "After disconnection, you can reconnect using port 22888 (ssh -p 22888 ...)."
+                sleep 3
+            else
+                echo ""
+                echo "╔════════════════════════════════════════════════════════════════╗"
+                echo "║  Warning: Port $port is your currently active SSH port!          ║"
+                echo "║  The new SSH port (22888) is active and listening.             ║"
+                echo "║  To run the Honeypot on port $port, you must:                  ║"
+                echo "║  1. Disconnect from this SSH session.                          ║"
+                echo "║  2. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
+                echo "║  3. Run this script again to complete the installation.        ║"
+                echo "║                                                                ║"
+                echo "║  TIPS: If you want the script to keep running automatically,   ║"
+                echo "║        run this script inside 'tmux' or 'screen'.              ║"
+                echo "╚════════════════════════════════════════════════════════════════╝"
+                die "Installation suspended. Please reconnect using port 22888."
+            fi
         else
             warn "Port $port is your currently active SSH port, but port 22888 is not active/listening yet."
             warn "Skipping the cleanup of port $port to prevent you from getting disconnected."
@@ -433,9 +445,29 @@ step "[STEP 6/12] SSH PORT CHANGE"
 
 NEW_SSH_PORT="22888"
 
-# Check if the system uses systemd socket activation for SSH (Ubuntu 22.10+)
-if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-    warn "System uses systemd socket activation. Configuring SSH port via systemd override..."
+# 1. Apply new port configuration to sshd_config (traditional/service)
+# We always apply this so that if the system transitions to service mode, the port is already correct.
+# We use a drop-in file if the sshd_config.d directory exists, to avoid messing up the main file.
+if [ -d /etc/ssh/sshd_config.d ]; then
+    log "Writing port configuration to /etc/ssh/sshd_config.d/00-honeypot.conf..."
+    echo "Port ${NEW_SSH_PORT}" | sudo tee /etc/ssh/sshd_config.d/00-honeypot.conf >/dev/null
+else
+    log "Modifying port in /etc/ssh/sshd_config..."
+    # Remove all active Port lines to avoid conflicts
+    sudo sed -i -E '/^[[:space:]]*Port[[:space:]]/d' /etc/ssh/sshd_config
+    # Add Port 22888 on a new line
+    echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+fi
+
+# Allow the port in UFW firewall
+if command -v ufw &>/dev/null; then
+    sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
+    log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
+fi
+
+# 2. Check if systemd socket activation for SSH is currently active (running/active)
+if systemctl is-active --quiet ssh.socket 2>/dev/null; then
+    log "System uses active systemd socket activation. Configuring SSH port via systemd override..."
     
     # Create the drop-in directory if it does not exist
     sudo mkdir -p /etc/systemd/system/ssh.socket.d
@@ -447,12 +479,6 @@ ListenStream=
 ListenStream=${NEW_SSH_PORT}
 EOF
 
-    # Allow the port in UFW firewall
-    if command -v ufw &>/dev/null; then
-        sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
-        log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
-    fi
-
     # Reload systemd daemon and restart/enable the socket
     log "Reloading systemd and restarting ssh.socket..."
     sudo systemctl daemon-reload
@@ -460,33 +486,24 @@ EOF
     sudo systemctl restart ssh.socket
     sleep 2
 else
-    # Traditional method (editing sshd_config)
-    CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
-
-    if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
-        warn "SSH port will be changed to ${NEW_SSH_PORT}. Make sure that port is open in the firewall!"
-        read -p "Continue? (y/n) " -r
-        [[ $REPLY =~ ^[Yy]$ ]] || die "Cancelled by user."
-        
-        # Replace if exists, or append if it doesn't exist
-        if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
-            sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-        else
-            echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
-        fi
-
-        if command -v ufw &>/dev/null; then
-            sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
-            log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
-        fi
-    else
-        info "sshd_config already has Port ${NEW_SSH_PORT}."
+    # If not using socket activation (or socket is inactive), restart traditional service
+    log "System uses traditional SSH service. Restarting SSH service..."
+    
+    # Ensure ssh.socket is stopped and disabled if present (to avoid conflict)
+    if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+        sudo systemctl stop ssh.socket 2>/dev/null || true
+        sudo systemctl disable ssh.socket 2>/dev/null || true
     fi
-
-    # (Re)start traditional ssh service
+    
+    # Run daemon-reload
+    sudo systemctl daemon-reload 2>/dev/null || true
+    
+    # Restart ssh/sshd service
     if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        sudo systemctl enable sshd 2>/dev/null || true
         sudo systemctl restart sshd
     else
+        sudo systemctl enable ssh 2>/dev/null || true
         sudo systemctl restart ssh
     fi
     sleep 2

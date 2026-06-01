@@ -68,16 +68,28 @@ free_port() {
     if [[ "$port" == "$active_ssh_port" ]]; then
         # Hanya tangguhkan jika port 22888 benar-benar sudah aktif dan mendengarkan
         if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
-            echo ""
-            echo "╔════════════════════════════════════════════════════════════════╗"
-            echo "║  Peringatan: Port $port adalah port SSH aktif Anda saat ini!     ║"
-            echo "║  Port SSH baru (22888) sudah aktif dan mendengarkan.           ║"
-            echo "║  Untuk menjalankan Honeypot di port $port, Anda harus:          ║"
-            echo "║  1. Keluar dari sesi SSH ini.                                  ║"
-            echo "║  2. Masuk kembali menggunakan port 22888 (ssh -p 22888 ...).   ║"
-            echo "║  3. Jalankan kembali script ini untuk menyelesaikan instalasi. ║"
-            echo "╚════════════════════════════════════════════════════════════════╝"
-            die "Instalasi ditangguhkan. Silakan masuk kembali menggunakan port 22888."
+            # Cek apakah berjalan di tmux atau screen
+            if [[ -n "${TMUX:-}" || -n "${STY:-}" ]]; then
+                warn "Port $port adalah port SSH aktif Anda saat ini."
+                info "Mendeteksi sesi terminal (tmux/screen) yang aman di background."
+                info "Koneksi SSH Anda akan terputus dalam 3 detik, tetapi script akan terus berjalan di background."
+                info "Setelah terputus, Anda bisa masuk kembali menggunakan port 22888 (ssh -p 22888 ...)."
+                sleep 3
+            else
+                echo ""
+                echo "╔════════════════════════════════════════════════════════════════╗"
+                echo "║  Peringatan: Port $port adalah port SSH aktif Anda saat ini!     ║"
+                echo "║  Port SSH baru (22888) sudah aktif dan mendengarkan.           ║"
+                echo "║  Untuk menjalankan Honeypot di port $port, Anda harus:          ║"
+                echo "║  1. Keluar dari sesi SSH ini.                                  ║"
+                echo "║  2. Masuk kembali menggunakan port 22888 (ssh -p 22888 ...).   ║"
+                echo "║  3. Jalankan kembali script ini untuk menyelesaikan instalasi. ║"
+                echo "║                                                                ║"
+                echo "║  TIPS: Jika ingin script tetap berjalan otomatis saat terputus,║"
+                echo "║        jalankan script ini di dalam 'tmux' atau 'screen'.      ║"
+                echo "╚════════════════════════════════════════════════════════════════╝"
+                die "Instalasi ditangguhkan. Silakan masuk kembali menggunakan port 22888."
+            fi
         else
             warn "Port $port adalah port SSH aktif Anda, tetapi port 22888 belum aktif/listening."
             warn "Melewati pembersihan port $port agar koneksi Anda tidak terputus."
@@ -433,9 +445,29 @@ step "[STEP 6/12] PERUBAHAN PORT SSH"
 
 NEW_SSH_PORT="22888"
 
-# Cek apakah sistem menggunakan systemd socket activation untuk SSH (Ubuntu 22.10+)
-if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-    warn "Sistem menggunakan systemd socket activation. Mengonfigurasi port SSH via systemd override..."
+# 1. Terapkan konfigurasi port baru ke sshd_config (tradisional/service)
+# Kita selalu menerapkan ini agar jika sistem beralih ke mode service, port-nya sudah benar.
+# Dan kita gunakan drop-in file jika direktori sshd_config.d ada, agar tidak mengacaukan file utama.
+if [ -d /etc/ssh/sshd_config.d ]; then
+    log "Menulis konfigurasi port ke /etc/ssh/sshd_config.d/00-honeypot.conf..."
+    echo "Port ${NEW_SSH_PORT}" | sudo tee /etc/ssh/sshd_config.d/00-honeypot.conf >/dev/null
+else
+    log "Mengubah port di /etc/ssh/sshd_config..."
+    # Hapus semua baris Port yang aktif agar tidak konflik
+    sudo sed -i -E '/^[[:space:]]*Port[[:space:]]/d' /etc/ssh/sshd_config
+    # Tambahkan Port 22888 di baris baru
+    echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
+fi
+
+# Izinkan port di firewall UFW
+if command -v ufw &>/dev/null; then
+    sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
+    log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
+fi
+
+# 2. Cek apakah systemd socket activation untuk SSH sedang aktif (running/active)
+if systemctl is-active --quiet ssh.socket 2>/dev/null; then
+    log "Sistem menggunakan systemd socket activation yang aktif. Mengonfigurasi port SSH via systemd override..."
     
     # Buat direktori drop-in jika belum ada
     sudo mkdir -p /etc/systemd/system/ssh.socket.d
@@ -447,12 +479,6 @@ ListenStream=
 ListenStream=${NEW_SSH_PORT}
 EOF
 
-    # Izinkan port di firewall UFW
-    if command -v ufw &>/dev/null; then
-        sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
-        log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
-    fi
-
     # Reload systemd daemon dan restart/enable socket
     log "Reloading systemd dan merestart ssh.socket..."
     sudo systemctl daemon-reload
@@ -460,33 +486,24 @@ EOF
     sudo systemctl restart ssh.socket
     sleep 2
 else
-    # Metode Tradisional (mengubah sshd_config)
-    CURRENT_SSH_PORT=$(grep -E "^[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config 2>/dev/null | awk '{print $2}' || echo "22")
-
-    if [ "$CURRENT_SSH_PORT" != "$NEW_SSH_PORT" ]; then
-        warn "SSH port akan diubah ke ${NEW_SSH_PORT}. Pastikan port tersebut sudah dibuka di firewall!"
-        read -p "Lanjut? (y/n) " -r
-        [[ $REPLY =~ ^[Yy]$ ]] || die "Dibatalkan user."
-        
-        # Ganti jika ada, atau tambahkan jika tidak ada
-        if grep -q -E "^#?[[:space:]]*Port[[:space:]]" /etc/ssh/sshd_config; then
-            sudo sed -i -E "s/^#?[[:space:]]*Port[[:space:]].*/Port ${NEW_SSH_PORT}/" /etc/ssh/sshd_config
-        else
-            echo "Port ${NEW_SSH_PORT}" | sudo tee -a /etc/ssh/sshd_config >/dev/null
-        fi
-
-        if command -v ufw &>/dev/null; then
-            sudo ufw allow "${NEW_SSH_PORT}/tcp" >/dev/null 2>&1 || true
-            log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
-        fi
-    else
-        info "sshd_config sudah Port ${NEW_SSH_PORT}."
+    # Jika tidak menggunakan socket activation (atau socket tidak aktif), restart service tradisional
+    log "Sistem menggunakan SSH service tradisional. Merestart service SSH..."
+    
+    # Pastikan ssh.socket mati jika ada (agar tidak konflik)
+    if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+        sudo systemctl stop ssh.socket 2>/dev/null || true
+        sudo systemctl disable ssh.socket 2>/dev/null || true
     fi
-
-    # (Re)start ssh service tradisional
+    
+    # Jalankan daemon-reload
+    sudo systemctl daemon-reload 2>/dev/null || true
+    
+    # Restart service ssh/sshd
     if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+        sudo systemctl enable sshd 2>/dev/null || true
         sudo systemctl restart sshd
     else
+        sudo systemctl enable ssh 2>/dev/null || true
         sudo systemctl restart ssh
     fi
     sleep 2
