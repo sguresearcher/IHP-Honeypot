@@ -438,50 +438,25 @@ if command -v ufw &>/dev/null; then
     log "Port ${NEW_SSH_PORT}/tcp allowed in UFW."
 fi
 
-# 2. Check if systemd socket activation for SSH is currently active (running/active)
-if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-    log "System uses active systemd socket activation. Configuring SSH port via systemd override..."
-    
-    # Create the drop-in directory if it does not exist
-    sudo mkdir -p /etc/systemd/system/ssh.socket.d
-    
-    # Write the override config to change the port to 22888 (explicitly bind to IPv4 and IPv6)
-    sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf > /dev/null <<EOF
-[Socket]
-ListenStream=
-ListenStream=0.0.0.0:${NEW_SSH_PORT}
-ListenStream=[::]:${NEW_SSH_PORT}
-EOF
-
-    # Reload systemd daemon and restart/enable the socket
-    log "Reloading systemd and restarting ssh.socket..."
-    sudo systemctl daemon-reload
-    sudo systemctl enable ssh.socket 2>/dev/null || true
-    sudo systemctl restart ssh.socket
-    sleep 2
-else
-    # If not using socket activation (or socket is inactive), restart traditional service
-    log "System uses traditional SSH service. Restarting SSH service..."
-    
-    # Ensure ssh.socket is stopped and disabled if present (to avoid conflict)
-    if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-        sudo systemctl stop ssh.socket 2>/dev/null || true
-        sudo systemctl disable ssh.socket 2>/dev/null || true
-    fi
-    
-    # Run daemon-reload
-    sudo systemctl daemon-reload 2>/dev/null || true
-    
-    # Restart ssh/sshd service
-    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
-        sudo systemctl enable sshd 2>/dev/null || true
-        sudo systemctl restart sshd
-    else
-        sudo systemctl enable ssh 2>/dev/null || true
-        sudo systemctl restart ssh
-    fi
-    sleep 2
+# 2. Revert from systemd socket activation to traditional SSH service to ensure it always runs on boot
+log "Disabling systemd ssh.socket and enabling traditional ssh.service to ensure SSH auto-starts on boot..."
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    sudo systemctl stop ssh.socket 2>/dev/null || true
+    sudo systemctl disable ssh.socket 2>/dev/null || true
 fi
+
+# Run daemon-reload
+sudo systemctl daemon-reload
+
+# Enable and restart traditional ssh/sshd service
+if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+    sudo systemctl enable sshd 2>/dev/null || true
+    sudo systemctl restart sshd
+else
+    sudo systemctl enable ssh 2>/dev/null || true
+    sudo systemctl restart ssh
+fi
+sleep 2
 
 # Verify if the new port is active
 if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT}[[:space:]]"; then
