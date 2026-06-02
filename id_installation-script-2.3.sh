@@ -445,11 +445,12 @@ if systemctl is-active --quiet ssh.socket 2>/dev/null; then
     # Buat direktori drop-in jika belum ada
     sudo mkdir -p /etc/systemd/system/ssh.socket.d
     
-    # Tulis konfigurasi override untuk mengubah port ke 22888
+    # Tulis konfigurasi override untuk mengubah port ke 22888 (explicitly bind to IPv4 and IPv6)
     sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf > /dev/null <<EOF
 [Socket]
 ListenStream=
-ListenStream=${NEW_SSH_PORT}
+ListenStream=0.0.0.0:${NEW_SSH_PORT}
+ListenStream=[::]:${NEW_SSH_PORT}
 EOF
 
     # Reload systemd daemon dan restart/enable socket
