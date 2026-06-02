@@ -65,38 +65,6 @@ free_port() {
         active_ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
     fi
 
-    if [[ "$port" == "$active_ssh_port" ]]; then
-        # Only suspend if port 22888 is actually active and listening
-        if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
-            # Check if running inside tmux or screen
-            if [[ -n "${TMUX:-}" || -n "${STY:-}" ]]; then
-                warn "Port $port is your currently active SSH port."
-                info "Detected a safe terminal session (tmux/screen) in the background."
-                info "Your SSH connection will be terminated in 3 seconds, but the script will continue running in the background."
-                info "After disconnection, you can reconnect using port 22888 (ssh -p 22888 ...)."
-                sleep 3
-            else
-                echo ""
-                echo "╔════════════════════════════════════════════════════════════════╗"
-                echo "║  Warning: Port $port is your currently active SSH port!          ║"
-                echo "║  The new SSH port (22888) is active and listening.             ║"
-                echo "║  To run the Honeypot on port $port, you must:                  ║"
-                echo "║  1. Disconnect from this SSH session.                          ║"
-                echo "║  2. Reconnect using port 22888 (ssh -p 22888 ...).             ║"
-                echo "║  3. Run this script again to complete the installation.        ║"
-                echo "║                                                                ║"
-                echo "║  TIPS: If you want the script to keep running automatically,   ║"
-                echo "║        run this script inside 'tmux' or 'screen'.              ║"
-                echo "╚════════════════════════════════════════════════════════════════╝"
-                die "Installation suspended. Please reconnect using port 22888."
-            fi
-        else
-            warn "Port $port is your currently active SSH port, but port 22888 is not active/listening yet."
-            warn "Skipping the cleanup of port $port to prevent you from getting disconnected."
-            return
-        fi
-    fi
-
     # 1) Docker containers publishing this port
     local ids
     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
@@ -106,10 +74,15 @@ free_port() {
     fi
 
     # 2) Any remaining host process on this port
-    if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
-        warn "  Host: port ${port} is used by a host process — killing..."
-        sudo fuser -k "${port}/tcp" 2>/dev/null || true
-        sudo fuser -k "${port}/udp" 2>/dev/null || true
+    # If the port being freed is your active SSH port, skip fuser -k to prevent disconnection
+    if [[ -n "$active_ssh_port" && "$port" == "$active_ssh_port" ]]; then
+        warn "  Host: Port $port is your currently active SSH port. Skipping the host process cleanup to prevent disconnection."
+    else
+        if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
+            warn "  Host: port ${port} is used by a host process — killing..."
+            sudo fuser -k "${port}/tcp" 2>/dev/null || true
+            sudo fuser -k "${port}/udp" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -1102,3 +1075,14 @@ fi
 echo ""
 echo "=== Fluent Bit Status ==="
 sudo docker logs fluent-bit-hp 2>&1 | tail -5 || echo "  (no logs yet)"
+
+echo ""
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║  IMPORTANT: SSH PORT HAS MOVED TO 22888!                       ║"
+echo "║  Your current active SSH session remains connected on port 22. ║"
+echo "║  However, for any new SSH sessions, you MUST use port 22888:   ║"
+echo "║  ssh -p 22888 user@ip                                          ║"
+echo "║                                                                ║"
+echo "║  Port 22 is now fully occupied by the Honeypot container.      ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""

@@ -65,38 +65,6 @@ free_port() {
         active_ssh_port=$(echo "$SSH_CONNECTION" | awk '{print $4}')
     fi
 
-    if [[ "$port" == "$active_ssh_port" ]]; then
-        # Hanya tangguhkan jika port 22888 benar-benar sudah aktif dan mendengarkan
-        if sudo ss -tlnp 2>/dev/null | grep -q ":22888[[:space:]]"; then
-            # Cek apakah berjalan di tmux atau screen
-            if [[ -n "${TMUX:-}" || -n "${STY:-}" ]]; then
-                warn "Port $port adalah port SSH aktif Anda saat ini."
-                info "Mendeteksi sesi terminal (tmux/screen) yang aman di background."
-                info "Koneksi SSH Anda akan terputus dalam 3 detik, tetapi script akan terus berjalan di background."
-                info "Setelah terputus, Anda bisa masuk kembali menggunakan port 22888 (ssh -p 22888 ...)."
-                sleep 3
-            else
-                echo ""
-                echo "╔════════════════════════════════════════════════════════════════╗"
-                echo "║  Peringatan: Port $port adalah port SSH aktif Anda saat ini!     ║"
-                echo "║  Port SSH baru (22888) sudah aktif dan mendengarkan.           ║"
-                echo "║  Untuk menjalankan Honeypot di port $port, Anda harus:          ║"
-                echo "║  1. Keluar dari sesi SSH ini.                                  ║"
-                echo "║  2. Masuk kembali menggunakan port 22888 (ssh -p 22888 ...).   ║"
-                echo "║  3. Jalankan kembali script ini untuk menyelesaikan instalasi. ║"
-                echo "║                                                                ║"
-                echo "║  TIPS: Jika ingin script tetap berjalan otomatis saat terputus,║"
-                echo "║        jalankan script ini di dalam 'tmux' atau 'screen'.      ║"
-                echo "╚════════════════════════════════════════════════════════════════╝"
-                die "Instalasi ditangguhkan. Silakan masuk kembali menggunakan port 22888."
-            fi
-        else
-            warn "Port $port adalah port SSH aktif Anda, tetapi port 22888 belum aktif/listening."
-            warn "Melewati pembersihan port $port agar koneksi Anda tidak terputus."
-            return
-        fi
-    fi
-
     # 1) Docker container yang publish port ini
     local ids
     ids=$(sudo docker ps -q --filter "publish=${port}" 2>/dev/null || true)
@@ -106,10 +74,15 @@ free_port() {
     fi
 
     # 2) Proses host yang masih menggunakan port ini
-    if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
-        warn "  Host: port ${port} dipakai proses host — mematikan..."
-        sudo fuser -k "${port}/tcp" 2>/dev/null || true
-        sudo fuser -k "${port}/udp" 2>/dev/null || true
+    # Jika port yang dibebaskan adalah port SSH aktif Anda saat ini, lewati fuser -k agar sesi SSH tidak terputus
+    if [[ -n "$active_ssh_port" && "$port" == "$active_ssh_port" ]]; then
+        warn "  Host: Port $port adalah port SSH aktif Anda saat ini. Melewati pembersihan proses host agar koneksi Anda tidak terputus."
+    else
+        if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
+            warn "  Host: port ${port} dipakai proses host — mematikan..."
+            sudo fuser -k "${port}/tcp" 2>/dev/null || true
+            sudo fuser -k "${port}/udp" 2>/dev/null || true
+        fi
     fi
 }
 
@@ -1102,3 +1075,15 @@ fi
 echo ""
 echo "=== Fluent Bit Status ==="
 sudo docker logs fluent-bit-hp 2>&1 | tail -5 || echo "  (no logs yet)"
+
+echo ""
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║  PENTING: PORT SSH TELAH BERPINDAH KE 22888!                   ║"
+echo "║  Koneksi SSH aktif Anda saat ini masih terhubung di port 22.   ║"
+echo "║  Namun, untuk sesi SSH baru berikutnya, Anda WAJIB             ║"
+echo "║  menggunakan port 22888:                                       ║"
+echo "║  ssh -p 22888 user@ip                                          ║"
+echo "║                                                                ║"
+echo "║  Port 22 sekarang sepenuhnya digunakan oleh Honeypot.          ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
