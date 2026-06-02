@@ -438,50 +438,25 @@ if command -v ufw &>/dev/null; then
     log "Port ${NEW_SSH_PORT}/tcp diizinkan di UFW."
 fi
 
-# 2. Cek apakah systemd socket activation untuk SSH sedang aktif (running/active)
-if systemctl is-active --quiet ssh.socket 2>/dev/null; then
-    log "Sistem menggunakan systemd socket activation yang aktif. Mengonfigurasi port SSH via systemd override..."
-    
-    # Buat direktori drop-in jika belum ada
-    sudo mkdir -p /etc/systemd/system/ssh.socket.d
-    
-    # Tulis konfigurasi override untuk mengubah port ke 22888 (explicitly bind to IPv4 and IPv6)
-    sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf > /dev/null <<EOF
-[Socket]
-ListenStream=
-ListenStream=0.0.0.0:${NEW_SSH_PORT}
-ListenStream=[::]:${NEW_SSH_PORT}
-EOF
-
-    # Reload systemd daemon dan restart/enable socket
-    log "Reloading systemd dan merestart ssh.socket..."
-    sudo systemctl daemon-reload
-    sudo systemctl enable ssh.socket 2>/dev/null || true
-    sudo systemctl restart ssh.socket
-    sleep 2
-else
-    # Jika tidak menggunakan socket activation (atau socket tidak aktif), restart service tradisional
-    log "Sistem menggunakan SSH service tradisional. Merestart service SSH..."
-    
-    # Pastikan ssh.socket mati jika ada (agar tidak konflik)
-    if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
-        sudo systemctl stop ssh.socket 2>/dev/null || true
-        sudo systemctl disable ssh.socket 2>/dev/null || true
-    fi
-    
-    # Jalankan daemon-reload
-    sudo systemctl daemon-reload 2>/dev/null || true
-    
-    # Restart service ssh/sshd
-    if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
-        sudo systemctl enable sshd 2>/dev/null || true
-        sudo systemctl restart sshd
-    else
-        sudo systemctl enable ssh 2>/dev/null || true
-        sudo systemctl restart ssh
-    fi
-    sleep 2
+# 2. Kembalikan dari systemd socket activation ke service SSH tradisional agar selalu aktif saat boot
+log "Menonaktifkan systemd ssh.socket dan mengaktifkan service ssh tradisional agar SSH auto-start saat boot..."
+if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    sudo systemctl stop ssh.socket 2>/dev/null || true
+    sudo systemctl disable ssh.socket 2>/dev/null || true
 fi
+
+# Jalankan daemon-reload
+sudo systemctl daemon-reload
+
+# Aktifkan dan restart service ssh/sshd tradisional
+if systemctl list-unit-files 2>/dev/null | grep -q "^sshd\.service"; then
+    sudo systemctl enable sshd 2>/dev/null || true
+    sudo systemctl restart sshd
+else
+    sudo systemctl enable ssh 2>/dev/null || true
+    sudo systemctl restart ssh
+fi
+sleep 2
 
 # Verifikasi keaktifan port baru
 if sudo ss -tlnp | grep -q ":${NEW_SSH_PORT}[[:space:]]"; then
