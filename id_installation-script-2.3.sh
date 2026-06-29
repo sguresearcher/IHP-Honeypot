@@ -74,9 +74,15 @@ free_port() {
     fi
 
     # 2) Proses host yang masih menggunakan port ini
-    # Jika port yang dibebaskan adalah port SSH aktif Anda saat ini, lewati fuser -k agar sesi SSH tidak terputus
+    # Jika port yang dibebaskan adalah port SSH aktif Anda saat ini, matikan HANYA proses induk listener (bukan koneksi aktif) agar sesi SSH tidak terputus
     if [[ -n "$active_ssh_port" && "$port" == "$active_ssh_port" ]]; then
-        warn "  Host: Port $port adalah port SSH aktif Anda saat ini. Melewati pembersihan proses host agar koneksi Anda tidak terputus."
+        warn "  Host: Port $port adalah port SSH aktif Anda saat ini. Mematikan HANYA proses induk listener agar koneksi Anda tidak terputus..."
+        local listener_pids
+        listener_pids=$(sudo ss -tlnp 2>/dev/null | grep ":${port}[[:space:]]" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
+        if [[ -n "$listener_pids" ]]; then
+            log "  Mematikan PID listener: $listener_pids pada port $port..."
+            echo "$listener_pids" | xargs sudo kill -9 2>/dev/null || true
+        fi
     else
         if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
             warn "  Host: port ${port} dipakai proses host — mematikan..."
@@ -419,11 +425,14 @@ step "[STEP 6/12] PERUBAHAN PORT SSH"
 NEW_SSH_PORT="22888"
 
 # 1. Terapkan konfigurasi port baru ke sshd_config (tradisional/service)
-# Kita selalu menerapkan ini agar jika sistem beralih ke mode service, port-nya sudah benar.
-# Dan kita gunakan drop-in file jika direktori sshd_config.d ada, agar tidak mengacaukan file utama.
+# Beri tanda komentar pada semua directive Port yang aktif di config utama untuk menghindari konflik port
+sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/g' /etc/ssh/sshd_config
+
 if [ -d /etc/ssh/sshd_config.d ]; then
     log "Menulis konfigurasi port ke /etc/ssh/sshd_config.d/00-honeypot.conf..."
     echo "Port ${NEW_SSH_PORT}" | sudo tee /etc/ssh/sshd_config.d/00-honeypot.conf >/dev/null
+    # Beri tanda komentar pada semua directive Port di file-file lain di dalam sshd_config.d agar tidak bind ke port 22
+    find /etc/ssh/sshd_config.d/ -type f ! -name "00-honeypot.conf" -exec sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/g' {} + 2>/dev/null || true
 else
     log "Mengubah port di /etc/ssh/sshd_config..."
     # Hapus semua baris Port yang aktif agar tidak konflik
@@ -439,13 +448,22 @@ if command -v ufw &>/dev/null; then
 fi
 
 # 2. Kembalikan dari systemd socket activation ke service SSH tradisional agar selalu aktif saat boot
-log "Menonaktifkan systemd ssh.socket dan mengaktifkan service ssh tradisional agar SSH auto-start saat boot..."
+# Jika ssh.socket ada, kita juga override konfigurasinya agar menggunakan port baru.
+# Ini mencegahnya mengikat port 22 meskipun unit socket activation tidak sepenuhnya dinonaktifkan.
 if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    log "Mengonfigurasi override systemd ssh.socket ke port ${NEW_SSH_PORT}..."
+    sudo mkdir -p /etc/systemd/system/ssh.socket.d
+    cat <<EOF | sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf >/dev/null
+[Socket]
+ListenStream=
+ListenStream=${NEW_SSH_PORT}
+EOF
+    log "Menonaktifkan systemd ssh.socket..."
     sudo systemctl stop ssh.socket 2>/dev/null || true
     sudo systemctl disable ssh.socket 2>/dev/null || true
 fi
 
-# Jalankan daemon-reload
+# Jalankan daemon-reload untuk menerapkan override socket dan perubahan konfigurasi
 sudo systemctl daemon-reload
 
 # Aktifkan dan restart service ssh/sshd tradisional

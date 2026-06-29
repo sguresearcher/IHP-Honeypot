@@ -74,9 +74,15 @@ free_port() {
     fi
 
     # 2) Any remaining host process on this port
-    # If the port being freed is your active SSH port, skip fuser -k to prevent disconnection
+    # If the port being freed is your active SSH port, kill ONLY the listener parent process (not active connections) to prevent disconnection
     if [[ -n "$active_ssh_port" && "$port" == "$active_ssh_port" ]]; then
-        warn "  Host: Port $port is your currently active SSH port. Skipping the host process cleanup to prevent disconnection."
+        warn "  Host: Port $port is your currently active SSH port. Killing ONLY the listener parent process to prevent disconnection..."
+        local listener_pids
+        listener_pids=$(sudo ss -tlnp 2>/dev/null | grep ":${port}[[:space:]]" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u || true)
+        if [[ -n "$listener_pids" ]]; then
+            log "  Killing listener PID(s): $listener_pids on port $port..."
+            echo "$listener_pids" | xargs sudo kill -9 2>/dev/null || true
+        fi
     else
         if sudo ss -tlnup 2>/dev/null | grep -q ":${port}[[:space:]]"; then
             warn "  Host: port ${port} is used by a host process — killing..."
@@ -419,11 +425,14 @@ step "[STEP 6/12] SSH PORT CHANGE"
 NEW_SSH_PORT="22888"
 
 # 1. Apply new port configuration to sshd_config (traditional/service)
-# We always apply this so that if the system transitions to service mode, the port is already correct.
-# We use a drop-in file if the sshd_config.d directory exists, to avoid messing up the main file.
+# Comment out any uncommented Port directives in the main config to avoid port conflicts
+sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/g' /etc/ssh/sshd_config
+
 if [ -d /etc/ssh/sshd_config.d ]; then
     log "Writing port configuration to /etc/ssh/sshd_config.d/00-honeypot.conf..."
     echo "Port ${NEW_SSH_PORT}" | sudo tee /etc/ssh/sshd_config.d/00-honeypot.conf >/dev/null
+    # Comment out Port directives in any other files inside sshd_config.d to prevent binding to port 22
+    find /etc/ssh/sshd_config.d/ -type f ! -name "00-honeypot.conf" -exec sudo sed -i -E 's/^[[:space:]]*Port[[:space:]]/#&/g' {} + 2>/dev/null || true
 else
     log "Modifying port in /etc/ssh/sshd_config..."
     # Remove all active Port lines to avoid conflicts
@@ -439,13 +448,22 @@ if command -v ufw &>/dev/null; then
 fi
 
 # 2. Revert from systemd socket activation to traditional SSH service to ensure it always runs on boot
-log "Disabling systemd ssh.socket and enabling traditional ssh.service to ensure SSH auto-starts on boot..."
+# If ssh.socket exists, we ALSO override its configuration to use the new port.
+# This prevents it from binding to port 22 even if the socket activation unit is not fully disabled.
 if systemctl list-unit-files 2>/dev/null | grep -q "^ssh\.socket"; then
+    log "Configuring systemd ssh.socket override to use port ${NEW_SSH_PORT}..."
+    sudo mkdir -p /etc/systemd/system/ssh.socket.d
+    cat <<EOF | sudo tee /etc/systemd/system/ssh.socket.d/addresses.conf >/dev/null
+[Socket]
+ListenStream=
+ListenStream=${NEW_SSH_PORT}
+EOF
+    log "Disabling systemd ssh.socket..."
     sudo systemctl stop ssh.socket 2>/dev/null || true
     sudo systemctl disable ssh.socket 2>/dev/null || true
 fi
 
-# Run daemon-reload
+# Run daemon-reload to apply socket override and configuration changes
 sudo systemctl daemon-reload
 
 # Enable and restart traditional ssh/sshd service
