@@ -150,8 +150,8 @@ echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS Hub Configuration          ║"
 echo "╚══════════════════════════════════════╝"
-read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.157]: " NATS_HOSTS
-NATS_HOSTS=${NATS_HOSTS:-"103.19.110.157"}
+read -p "NATS Hub IPs (comma-separated) [default: 103.19.110.151]: " NATS_HOSTS
+NATS_HOSTS=${NATS_HOSTS:-"103.19.110.151"}
 read -p "NATS Hub Port [default: 4222]: " NATS_PORT
 NATS_PORT=${NATS_PORT:-"4222"}
 LEAF_CREDS_CONTENT=""
@@ -1021,8 +1021,8 @@ else
 fi
 
 ZABBIX_CONF="/etc/zabbix/zabbix_agent2.conf"
-sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.157" "$ZABBIX_CONF" \
-    || echo "ServerActive=103.19.110.157" | sudo tee -a "$ZABBIX_CONF"
+sudo sed -i "/^ServerActive=/c\\ServerActive=103.19.110.151" "$ZABBIX_CONF" \
+    || echo "ServerActive=103.19.110.151" | sudo tee -a "$ZABBIX_CONF"
 sudo sed -i "/^Hostname=/c\\Hostname=${ZABBIX_HOSTNAME}" "$ZABBIX_CONF" \
     || echo "Hostname=${ZABBIX_HOSTNAME}" | sudo tee -a "$ZABBIX_CONF"
 
