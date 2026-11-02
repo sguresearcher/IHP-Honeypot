@@ -19,7 +19,7 @@ The `installation-script-2.3.sh` and `id_installation-script-2.3.sh`(indonesian 
 - **Data Shipping:** Uses Fluent Bit to parse and ship honeypot logs.
 - **NATS Integration:** Configures a NATS Leaf Node to connect to a central NATS Hub, supporting JWT authentication and optional TLS encryption.
 - **Monitoring:** Installs and configures Zabbix Agent 2.
-- **System Hardening:** Changes the default SSH port, configures system limits (sysctl/limits.conf), and sets up swap space.
+- **Automated Watchdog:** Monitored via systemd timer (checks every 10 minutes); automatically restarts any honeypot container that has not produced data within 3 hours (with safe grace periods).
 
 ---
 
@@ -81,6 +81,7 @@ The installation happens in two phases. A system reboot is required between Phas
    - Configure and start the NATS Leaf Node.
    - Configure and start Fluent Bit.
    - Install and configure Zabbix Agent 2.
+   - Install and configure the Honeypot Watchdog service and timer.
 
 ---
 
@@ -119,10 +120,23 @@ Once Phase 2 completes, the script will output a final status summary. Review th
    systemctl status zabbix-agent2
    ```
 
-5. **Subsequent Logins:**
+5. **Verify Honeypot Watchdog:**
+   Check the watchdog status and timer:
+   ```bash
+   # View formatted honeypot activity table
+   sudo honeypot-watchdog --status
+
+   # Check systemd timer status (runs every 10 min)
+   systemctl status honeypot-watchdog.timer
+
+   # View watchdog logs
+   tail -f /var/log/honeypot-watchdog.log
+   ```
+
+6. **Subsequent Logins:**
    Remember that your SSH port is now `22888`. All future SSH connections must specify this port.
 
-6. **Idempotency:**
+7. **Idempotency:**
    If a container stops or configuration needs to be refreshed (like updating NATS credentials), you can safely run the script again (`./installation-script-2.3.sh`). It will skip steps that are already completed and recreate containers with the latest configuration.
 
 Note* :
