@@ -156,26 +156,66 @@ NATS_HOSTS=${NATS_HOSTS:-"103.19.110.151"}
 read -p "NATS Hub Port [default: 4222]: " NATS_PORT
 NATS_PORT=${NATS_PORT:-"4222"}
 LEAF_CREDS_CONTENT=""
+DEFAULT_CREDS_FILE="/opt/nats-leaf/creds/leafnode.creds"
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS JWT Credentials            ║"
 echo "╚══════════════════════════════════════╝"
-echo "    Silakan COPY seluruh isi text credentials (.creds) milik Tenant ini."
-echo "    Lalu PASTE di terminal ini. Setelah semua ter-paste, ketik 'EOF' pada baris baru dan tekan Enter:"
-echo "    --------------------------------------------------------"
 
-while IFS= read -r line; do
-  if [[ "$line" == "EOF" ]]; then
-    break
-  fi
-  LEAF_CREDS_CONTENT+="$line"$'\n'
-done
+if sudo test -s "$DEFAULT_CREDS_FILE" 2>/dev/null; then
+    echo "    File kredensial ditemukan di: ${DEFAULT_CREDS_FILE}"
+    read -p "    Gunakan file ${DEFAULT_CREDS_FILE} yang sudah ada? [Y/n, default: Y]: " USE_EXISTING_CREDS
+    USE_EXISTING_CREDS=${USE_EXISTING_CREDS:-"Y"}
+    if [[ "$USE_EXISTING_CREDS" =~ ^[Yy]$ ]]; then
+        LEAF_CREDS_CONTENT=$(sudo cat "$DEFAULT_CREDS_FILE")
+        if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
+            warn "File ${DEFAULT_CREDS_FILE} kosong — silakan masukkan kredensial secara manual."
+            LEAF_CREDS_CONTENT=""
+        else
+            if ! grep -q "BEGIN NATS USER JWT" <<< "$LEAF_CREDS_CONTENT"; then
+                warn "File ${DEFAULT_CREDS_FILE} tidak mengandung 'BEGIN NATS USER JWT' — periksa isinya jika koneksi NATS gagal."
+            fi
+            log "Kredensial dimuat dari file yang sudah ada: ${DEFAULT_CREDS_FILE}."
+        fi
+    fi
+fi
 
 if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
-  die "Kredensial tidak boleh kosong!"
+    echo ""
+    echo "[?] Sumber NATS Credentials"
+    echo "    [1] Paste isi file credentials (.creds) langsung (inline)"
+    echo "    [2] Masukkan path file .creds yang sudah ada"
+    read -p "    Pilih [1/2, default: 1]: " CREDS_CHOICE
+    CREDS_CHOICE=${CREDS_CHOICE:-"1"}
+
+    if [[ "$CREDS_CHOICE" == "2" ]]; then
+        read -p "    Path file credentials (.creds): " CREDS_PATH
+        sudo test -f "$CREDS_PATH" || die "File credentials tidak ditemukan: ${CREDS_PATH}"
+        LEAF_CREDS_CONTENT=$(sudo cat "$CREDS_PATH")
+        if ! grep -q "BEGIN NATS USER JWT" <<< "$LEAF_CREDS_CONTENT"; then
+            warn "File ${CREDS_PATH} tidak mengandung 'BEGIN NATS USER JWT' — periksa isinya jika koneksi NATS gagal."
+        fi
+        log "Kredensial dibaca dari: ${CREDS_PATH}"
+    else
+        echo ""
+        echo "    Silakan COPY seluruh isi text credentials (.creds) milik Tenant ini."
+        echo "    Lalu PASTE di terminal ini. Setelah semua ter-paste, ketik 'EOF' pada baris baru dan tekan Enter:"
+        echo "    --------------------------------------------------------"
+
+        while IFS= read -r line; do
+            if [[ "$line" == "EOF" ]]; then
+                break
+            fi
+            LEAF_CREDS_CONTENT+="$line"$'\n'
+        done
+        echo "    --------------------------------------------------------"
+        log "Kredensial berhasil dibaca (inline)."
+    fi
 fi
-echo "    --------------------------------------------------------"
-log "Kredensial berhasil dibaca."
+
+if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
+    die "Kredensial tidak boleh kosong!"
+fi
 
 # ============================================================
 # INPUT TLS CONFIGURATION
