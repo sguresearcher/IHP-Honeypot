@@ -5,6 +5,7 @@
 # Fix: URL-encode password NATS, dionaea volume, hapus -it flag
 # Fix: cleanup container lama by port (nama random Docker)
 # + TLS support untuk koneksi ke NATS Hub (CA cert)
+# + HTTPS Registry TLS (CA cert khusus /etc/docker/certs.d, tanpa insecure-registries)
 # + Malware Uploader (dionaea binaries → NATS JetStream Object Store)
 # + Single-phase install — tidak perlu reboot
 # ============================================================
@@ -403,18 +404,112 @@ if ! groups | grep -q docker; then
 fi
 
 # ============================================================
-# INSECURE REGISTRY
+# SECURE DOCKER REGISTRY (HTTPS + CA CERT KHUSUS REGISTRY)
 # ============================================================
 
 REGISTRY_IP="103.19.110.148:5000"
 DAEMON_JSON="/etc/docker/daemon.json"
 
-if ! grep -q "$REGISTRY_IP" "$DAEMON_JSON" 2>/dev/null; then
-    log "Menambahkan insecure registry..."
-    echo "{ \"insecure-registries\":[\"${REGISTRY_IP}\"] }" | sudo tee "$DAEMON_JSON"
-    sudo systemctl restart docker
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
+
+REGISTRY_CA_URL="https://raw.githubusercontent.com/sguresearcher/IHP-Honeypot/main/certs/registry-ca.crt"
+# Opsional pin SHA-256 dari certs/registry-ca.crt (jalankan: sha256sum certs/registry-ca.crt)
+# Isi dengan 64 karakter hex digest setelah certs/registry-ca.crt dibuat dan dipublish.
+REGISTRY_CA_SHA256="ee6f1758f39b6a209f6d23f3f624f6d6cff5acb90ddc4ad55d148db73400ef31"
+REGISTRY_CERT_DIR="/etc/docker/certs.d/${REGISTRY_IP}"
+REGISTRY_CA_DEST="${REGISTRY_CERT_DIR}/ca.crt"
+
+CA_TMP=""
+CA_SOURCE=""
+
+if [[ -n "${SCRIPT_DIR}" && -f "${SCRIPT_DIR}/certs/registry-ca.crt" ]]; then
+    CA_SOURCE="${SCRIPT_DIR}/certs/registry-ca.crt"
+    log "Menggunakan Registry CA certificate lokal: ${CA_SOURCE}"
 else
-    info "Insecure registry sudah dikonfigurasi, skip."
+    CA_TMP=$(mktemp /tmp/registry-ca.XXXXXX)
+    CA_SOURCE="${CA_TMP}"
+    log "Mengunduh Registry CA certificate dari ${REGISTRY_CA_URL}..."
+    if command -v curl &>/dev/null; then
+        curl -fsSL --max-time 15 -o "${CA_TMP}" "${REGISTRY_CA_URL}" || {
+            rm -f "${CA_TMP}"
+            die "Gagal mengunduh Registry CA certificate dari ${REGISTRY_CA_URL}."
+        }
+    elif command -v wget &>/dev/null; then
+        wget -q --timeout=15 -O "${CA_TMP}" "${REGISTRY_CA_URL}" || {
+            rm -f "${CA_TMP}"
+            die "Gagal mengunduh Registry CA certificate dari ${REGISTRY_CA_URL}."
+        }
+    else
+        rm -f "${CA_TMP}"
+        die "curl maupun wget tidak ditemukan untuk mengunduh Registry CA certificate."
+    fi
+fi
+
+if grep -q "PRIVATE KEY" "${CA_SOURCE}"; then
+    [[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+    die "Menolak mempercayai ${CA_SOURCE}: file mengandung PRIVATE KEY."
+fi
+
+if ! grep -q "BEGIN CERTIFICATE" "${CA_SOURCE}"; then
+    [[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+    die "Registry CA certificate tidak valid di ${CA_SOURCE}: BEGIN CERTIFICATE tidak ditemukan."
+fi
+
+if command -v openssl &>/dev/null; then
+    if ! openssl x509 -in "${CA_SOURCE}" -noout &>/dev/null; then
+        [[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+        die "Registry CA certificate tidak valid di ${CA_SOURCE}: verifikasi openssl x509 gagal."
+    fi
+fi
+
+if [[ -n "${REGISTRY_CA_SHA256}" ]]; then
+    if command -v sha256sum &>/dev/null; then
+        ACTUAL_SHA256=$(sha256sum "${CA_SOURCE}" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
+    elif command -v shasum &>/dev/null; then
+        ACTUAL_SHA256=$(shasum -a 256 "${CA_SOURCE}" | awk '{print $1}' | tr '[:upper:]' '[:lower:]')
+    else
+        [[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+        die "sha256sum maupun shasum tidak ditemukan untuk memverifikasi REGISTRY_CA_SHA256."
+    fi
+    EXPECTED_SHA256=$(echo "${REGISTRY_CA_SHA256}" | tr '[:upper:]' '[:lower:]')
+    if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
+        [[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+        die "SHA-256 Registry CA certificate tidak cocok (diharapkan ${EXPECTED_SHA256}, didapat ${ACTUAL_SHA256})."
+    fi
+fi
+
+sudo mkdir -p "${REGISTRY_CERT_DIR}"
+sudo install -m 0644 "${CA_SOURCE}" "${REGISTRY_CA_DEST}"
+[[ -n "${CA_TMP}" ]] && rm -f "${CA_TMP}"
+log "Registry HTTPS CA certificate terpasang di ${REGISTRY_CA_DEST}."
+
+if [[ -f "$DAEMON_JSON" ]] && sudo grep -qF "$REGISTRY_IP" "$DAEMON_JSON" 2>/dev/null; then
+    log "Menghapus entri insecure-registries lama untuk ${REGISTRY_IP} dari ${DAEMON_JSON}..."
+    if command -v python3 &>/dev/null; then
+        sudo python3 - "$DAEMON_JSON" "$REGISTRY_IP" <<'PYEOF'
+import json, sys
+path, reg = sys.argv[1], sys.argv[2]
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+ins = data.get("insecure-registries")
+if isinstance(ins, list):
+    ins = [x for x in ins if x != reg]
+    if ins:
+        data["insecure-registries"] = ins
+    else:
+        data.pop("insecure-registries", None)
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PYEOF
+        sudo systemctl restart docker
+        log "${REGISTRY_IP} dihapus dari insecure-registries dan Docker di-restart."
+    else
+        warn "python3 tidak ditemukan — harap hapus ${REGISTRY_IP} dari insecure-registries di ${DAEMON_JSON} secara manual lalu restart Docker."
+    fi
 fi
 
 # ============================================================
