@@ -156,26 +156,66 @@ NATS_HOSTS=${NATS_HOSTS:-"103.19.110.151"}
 read -p "NATS Hub Port [default: 4222]: " NATS_PORT
 NATS_PORT=${NATS_PORT:-"4222"}
 LEAF_CREDS_CONTENT=""
+DEFAULT_CREDS_FILE="/opt/nats-leaf/creds/leafnode.creds"
 echo ""
 echo "╔══════════════════════════════════════╗"
 echo "║      NATS JWT Credentials            ║"
 echo "╚══════════════════════════════════════╝"
-echo "    Please COPY the entire contents of this Tenant's credentials (.creds) file."
-echo "    Then PASTE it in this terminal. Once all text is pasted, type 'EOF' on a new line and press Enter:"
-echo "    --------------------------------------------------------"
 
-while IFS= read -r line; do
-  if [[ "$line" == "EOF" ]]; then
-    break
-  fi
-  LEAF_CREDS_CONTENT+="$line"$'\n'
-done
+if sudo test -s "$DEFAULT_CREDS_FILE" 2>/dev/null; then
+    echo "    Existing credentials file detected at: ${DEFAULT_CREDS_FILE}"
+    read -p "    Use existing ${DEFAULT_CREDS_FILE}? [Y/n, default: Y]: " USE_EXISTING_CREDS
+    USE_EXISTING_CREDS=${USE_EXISTING_CREDS:-"Y"}
+    if [[ "$USE_EXISTING_CREDS" =~ ^[Yy]$ ]]; then
+        LEAF_CREDS_CONTENT=$(sudo cat "$DEFAULT_CREDS_FILE")
+        if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
+            warn "File ${DEFAULT_CREDS_FILE} is empty — please provide credentials manually."
+            LEAF_CREDS_CONTENT=""
+        else
+            if ! grep -q "BEGIN NATS USER JWT" <<< "$LEAF_CREDS_CONTENT"; then
+                warn "File ${DEFAULT_CREDS_FILE} does not contain 'BEGIN NATS USER JWT' — verify its contents if NATS connection fails."
+            fi
+            log "Credentials loaded from existing file: ${DEFAULT_CREDS_FILE}."
+        fi
+    fi
+fi
 
 if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
-  die "Credentials must not be empty!"
+    echo ""
+    echo "[?] NATS Credentials Source"
+    echo "    [1] Paste credentials (.creds) contents directly (inline)"
+    echo "    [2] Provide path to an existing .creds file"
+    read -p "    Choose [1/2, default: 1]: " CREDS_CHOICE
+    CREDS_CHOICE=${CREDS_CHOICE:-"1"}
+
+    if [[ "$CREDS_CHOICE" == "2" ]]; then
+        read -p "    Credentials file path (.creds): " CREDS_PATH
+        sudo test -f "$CREDS_PATH" || die "Credentials file not found: ${CREDS_PATH}"
+        LEAF_CREDS_CONTENT=$(sudo cat "$CREDS_PATH")
+        if ! grep -q "BEGIN NATS USER JWT" <<< "$LEAF_CREDS_CONTENT"; then
+            warn "File ${CREDS_PATH} does not contain 'BEGIN NATS USER JWT' — verify its contents if NATS connection fails."
+        fi
+        log "Credentials read from: ${CREDS_PATH}"
+    else
+        echo ""
+        echo "    Please COPY the entire contents of this Tenant's credentials (.creds) file."
+        echo "    Then PASTE it in this terminal. Once all text is pasted, type 'EOF' on a new line and press Enter:"
+        echo "    --------------------------------------------------------"
+
+        while IFS= read -r line; do
+            if [[ "$line" == "EOF" ]]; then
+                break
+            fi
+            LEAF_CREDS_CONTENT+="$line"$'\n'
+        done
+        echo "    --------------------------------------------------------"
+        log "Credentials successfully read (inline)."
+    fi
 fi
-echo "    --------------------------------------------------------"
-log "Credentials successfully read."
+
+if [[ -z "$(echo -n "$LEAF_CREDS_CONTENT" | tr -d '[:space:]')" ]]; then
+    die "Credentials must not be empty!"
+fi
 
 # ============================================================
 # INPUT TLS CONFIGURATION
