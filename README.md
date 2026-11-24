@@ -74,7 +74,7 @@ The installation happens in two phases. A system reboot is required between Phas
    ```
 3. The script will automatically detect that Phase 1 is complete and proceed with Phase 2. It will:
    - Install Docker (if not present).
-   - Add the insecure registry configuration.
+   - Install the Registry HTTPS CA certificate (`certs/registry-ca.crt` → `/etc/docker/certs.d/103.19.110.148:5000/ca.crt`) and remove any legacy insecure registry entry.
    - Pull the necessary Docker images.
    - Create Docker volumes.
    - Start all honeypot containers.

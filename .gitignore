@@ -1,0 +1,9 @@
+# Private keys and sensitive credentials — NEVER commit to GitHub
+*.key
+*.p12
+*.pfx
+*.creds
+certs/*.csr
+certs/*.srl
+certs/server.crt
+.DS_Store
